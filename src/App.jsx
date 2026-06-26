@@ -24,10 +24,13 @@ const dias = (a, b) => a && b ? Math.round((new Date(b) - new Date(a)) / 8640000
 
 function calcOp(op) {
   const exposicion = (op.strike || 0) * 100
+  // prima y precio_cierre son el TOTAL del contrato (no por acción)
+  // obj_precio = total a pagar al cerrar para conseguir el objetivo de beneficio
   const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * (1 - op.objetivo_pct / 100)).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
   if (op.estado === 'CERRADA' && op.precio_cierre != null && op.prima != null && beneficio == null) {
-    beneficio = parseFloat(((op.prima - op.precio_cierre) * 100).toFixed(2))
+    // beneficio = prima_total - coste_cierre_total (ambos en dólares totales)
+    beneficio = parseFloat((op.prima - op.precio_cierre).toFixed(2))
   }
   const d = dias(op.fecha_apertura, op.fecha_cierre)
   const rent_total = beneficio != null && exposicion ? parseFloat((beneficio / exposicion * 100).toFixed(4)) : null
@@ -73,6 +76,11 @@ function buildSeed() {
     { mes:'Mayo', estado:'CERRADA', fecha:46160, estrategia:'VPUT', ticker:'HD', venc:46191, strike:265, prima:108, obj_pct:45, cierre:46171, benef:54.15, precio100:26500, dias:11 },
     { mes:'Mayo', estado:'CERRADA', fecha:46170, estrategia:'VPUT', ticker:'INTU', venc:46191, strike:270, prima:378, obj_pct:45, cierre:46171, benef:206.89, precio100:27000, dias:1 },
     { mes:'Mayo', estado:'CERRADA', fecha:46163, estrategia:'VPUT', ticker:'NU', venc:46171, strike:13, prima:18, obj_pct:45, cierre:46171, benef:8.9, precio100:1300, dias:8 },
+    // Operaciones Mayo Pablo adicionales (faltaban del seed original)
+    { mes:'Mayo', estado:'CERRADA', fecha:46079, estrategia:'CCALL', ticker:'NFLX', venc:46220, strike:70, prima:null, obj_pct:45, cierre:46153, benef:450.85, precio100:7000, dias:74 },
+    { mes:'Mayo', estado:'CERRADA', fecha:null,  estrategia:'VPUT', ticker:'PAYC', venc:null,  strike:null, prima:null, obj_pct:45, cierre:46161, benef:37.77, precio100:0, dias:null },
+    { mes:'Mayo', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'BAM',  venc:46191, strike:42.5, prima:48, obj_pct:45, cierre:46170, benef:26.95, precio100:4250, dias:9 },
+    { mes:'Mayo', estado:'CERRADA', fecha:46164, estrategia:'VPUT', ticker:'CMCSA',venc:46171, strike:25,  prima:30, obj_pct:45, cierre:46170, benef:16.96, precio100:2500, dias:6 },
     { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'MA', venc:46191, strike:470, prima:390, obj_pct:45, cierre:46177, benef:-65.69, precio100:47000, dias:15 },
     { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'ACN', venc:46191, strike:157.5, prima:301, obj_pct:45, cierre:46174, benef:179.89, precio100:15750, dias:13 },
     { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'ADBE', venc:46191, strike:225, prima:474, obj_pct:45, cierre:46174, benef:236.89, precio100:22500, dias:13 },
@@ -141,6 +149,9 @@ function buildSeed() {
     { mes:'Mayo', estado:'CERRADA', fecha:46163, estrategia:'VPUT', ticker:'ADBE', venc:46191, strike:225, prima:654, obj_pct:45, cierre:46171, benef:236.39, precio100:22500, dias:8 },
     { mes:'Mayo', estado:'CERRADA', fecha:46164, estrategia:'VPUT', ticker:'CMCSA', venc:46191, strike:25, prima:30, obj_pct:45, cierre:46170, benef:16.5, precio100:2500, dias:6 },
     { mes:'Mayo', estado:'CERRADA', fecha:46163, estrategia:'VPUT', ticker:'NU', venc:46171, strike:13, prima:20, obj_pct:45, cierre:46171, benef:14.25, precio100:1300, dias:8 },
+    // Operaciones Mayo María adicionales (faltaban del seed original)
+    { mes:'Mayo', estado:'CERRADA', fecha:46171, estrategia:'VPUT', ticker:'NU',   venc:46178, strike:13, prima:21, obj_pct:45, cierre:46178, benef:-33.0, precio100:1300, dias:7 },
+    { mes:'Mayo', estado:'CERRADA', fecha:null,  estrategia:'VPUT', ticker:'PAYX', venc:46283, strike:null, prima:null, obj_pct:45, cierre:46171, benef:-52.5, precio100:0, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46171, estrategia:'VCALL', ticker:'PYPL', venc:46191, strike:47, prima:55, obj_pct:45, cierre:46182, benef:47.15, precio100:4700, dias:10 },
     { mes:'Junio', estado:'CERRADA', fecha:46157, estrategia:'VPUT', ticker:'AWK', venc:46191, strike:115, prima:75, obj_pct:45, cierre:46176, benef:32.95, precio100:11500, dias:15 },
     { mes:'Junio', estado:'CERRADA', fecha:46170, estrategia:'VPUT', ticker:'CMCSA', venc:46191, strike:25, prima:38, obj_pct:45, cierre:46177, benef:-116.5, precio100:2500, dias:6 },
@@ -165,12 +176,13 @@ function buildSeed() {
     ticker: r.ticker,
     vencimiento: excelDate(r.venc),
     strike: r.strike || null,
-    prima: r.prima || null,
+    prima: r.prima || null,      // total contrato en $
     objetivo_pct: r.obj_pct || 45,
     margen: null,
     fecha_cierre: r.cierre ? excelDate(r.cierre) : null,
+    // precio_cierre = total pagado al cerrar = prima_total - beneficio
     precio_cierre: r.estado === 'CERRADA' && r.prima && r.benef != null
-      ? parseFloat((r.prima - r.benef / 100).toFixed(2))
+      ? parseFloat((r.prima - r.benef).toFixed(2))
       : null,
     beneficio: r.benef != null ? r.benef : null,
     adjudicacion: r.adj || null,
@@ -229,18 +241,33 @@ function Select({ label, value, onChange, options }) {
   )
 }
 
+// Cuenta atrás a vencimiento
+const diasVence = venc => {
+  if (!venc) return null
+  return Math.ceil((new Date(venc + 'T23:59:59') - new Date()) / 86400000)
+}
+const mesCierre = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).replace(' ', "'") : null
+
+const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 60px 75px 60px 50px'
+
 // Tabla de operaciones
 function OpRow({ op, onEdit, onDelete, onClose }) {
   const [exp, setExp] = useState(false)
   const neg = op.beneficio != null && op.beneficio < 0
   const colBenef = op.beneficio == null ? C.dim : neg ? C.red : C.grn
 
+  // Cuenta atrás a vencimiento
+  const dv = op.estado === 'ABIERTA' ? diasVence(op.vencimiento) : null
+  const alertaVence = dv != null && dv <= 15
+  const colVence = dv == null ? null : dv <= 0 ? C.red : dv <= 15 ? '#f97316' : dv <= 30 ? C.gold : C.mut
+
   return (
-    <div style={{ borderBottom: `1px solid ${C.brd}`, transition: 'background .1s' }}
+    <div style={{ borderBottom: `1px solid ${C.brd}`, transition: 'background .1s',
+      ...(alertaVence && { boxShadow: `inset 3px 0 0 ${dv <= 0 ? C.red : '#f97316'}` }) }}
       onMouseEnter={e => e.currentTarget.style.background = C.surf2}
       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
       <div onClick={() => setExp(e => !e)}
-        style={{ display: 'grid', gridTemplateColumns: '90px 60px 70px 80px 55px 65px 65px 80px 90px 70px 60px 50px',
+        style={{ display: 'grid', gridTemplateColumns: GRID,
           gap: 8, padding: '8px 12px', cursor: 'pointer', alignItems: 'center', fontSize: 12 }}>
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.fecha_apertura)}</span>
         <Badge text={op.ticker} color={C.acc} />
@@ -255,7 +282,23 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
         <span style={{ color: colBenef, textAlign: 'right', fontSize: 11 }}>
           {op.rent_anual != null ? fmtPct(op.rent_anual) : '—'}
         </span>
-        <span style={{ color: C.dim, fontSize: 11, textAlign: 'right' }}>{op.dias ?? '—'}d</span>
+        {/* Columna combinada: VENCE (abierta) o MES CIERRE (cerrada) */}
+        {op.estado === 'ABIERTA' ? (
+          dv != null ? (
+            <span style={{ textAlign: 'center' }}>
+              <span style={{ background: alertaVence ? colVence + '22' : 'transparent',
+                border: alertaVence ? `1px solid ${colVence}` : 'none',
+                color: colVence, borderRadius: 4, padding: alertaVence ? '1px 5px' : 0,
+                fontSize: 11, fontWeight: alertaVence ? 700 : 400 }}>
+                {dv <= 0 ? '⚠️ VENC' : `${dv}d`}
+              </span>
+            </span>
+          ) : <span style={{ color: C.dim, textAlign: 'center' }}>—</span>
+        ) : (
+          <span style={{ color: C.dim, fontSize: 11, textAlign: 'center' }}>
+            {mesCierre(op.fecha_cierre) ?? '—'}
+          </span>
+        )}
         <Badge text={op.estado === 'ABIERTA' ? '🟢 ABIERTA' : '⚫ CERRADA'}
           color={op.estado === 'ABIERTA' ? C.grn : C.mut} />
         <span style={{ color: C.dim }}>{exp ? '▲' : '▼'}</span>
@@ -323,7 +366,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
         <Input label="Fecha apertura" value={f.fecha_apertura} onChange={upd('fecha_apertura')} type="date" />
         <Input label="Vencimiento" value={f.vencimiento} onChange={upd('vencimiento')} type="date" />
         <Input label="Strike" value={f.strike} onChange={upd('strike')} type="number" step="0.5" />
-        <Input label="Prima (por acción)" value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
+        <Input label="Prima total contrato ($)" value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
         <Input label="Objetivo cierre %" value={f.objetivo_pct} onChange={upd('objetivo_pct')} type="number" step="1" />
         <Input label="Margen requerido ($)" value={f.margen} onChange={upd('margen')} type="number" step="1" />
       </div>
@@ -339,7 +382,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
       {f.estado === 'CERRADA' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
           <Input label="Fecha cierre" value={f.fecha_cierre} onChange={upd('fecha_cierre')} type="date" />
-          <Input label="Precio cierre (por acción)" value={f.precio_cierre} onChange={upd('precio_cierre')} type="number" step="0.01" />
+          <Input label="Precio cierre total ($)" value={f.precio_cierre} onChange={upd('precio_cierre')} type="number" step="0.01" />
           <Input label="Beneficio neto ($) — opcional" value={f.beneficio} onChange={upd('beneficio')} type="number" step="0.01" />
           <Input label="Adjudicación ($)" value={f.adjudicacion} onChange={upd('adjudicacion')} type="number" step="0.01" />
         </div>
@@ -381,9 +424,11 @@ function ResultsTab({ ops, cuenta }) {
   const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA' && o.beneficio != null)
   const byMes = {}
   cerradas.forEach(op => {
-    const k = mesKey(op.fecha_cierre)
+    // Usar fecha_cierre, y si no existe usar vencimiento como aproximación
+    const fechaRef = op.fecha_cierre || op.vencimiento || op.fecha_apertura
+    const k = mesKey(fechaRef)
     if (!k) return
-    if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(op.fecha_cierre) }
+    if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(fechaRef) }
     byMes[k].total += op.beneficio
     byMes[k].count += 1
   })
@@ -482,6 +527,7 @@ export default function App() {
     else if (tab === 'maria' || tab === 'res-maria') { if (o.cuenta !== 'maria') return false }
     else return true
     if (filtro !== 'TODAS' && o.estado !== filtro) return false
+    if (mesFiltro !== 'TODOS' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
     return true
   }).sort((a, b) => {
@@ -514,17 +560,40 @@ export default function App() {
           model: 'claude-sonnet-4-6', max_tokens: 1000, temperature: 0,
           messages: [{ role: 'user', content: [
             { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data } },
-            { type: 'text', text: `Analiza este pantallazo de Interactive Brokers. Extrae los datos de la operación con opciones.
+            { type: 'text', text: `Analiza este extracto de Interactive Brokers y extrae los datos de la operación con opciones.
+
+FORMATO WEB/ESCRITORIO (tabla con columnas):
+- Columna "Código": C = CIERRE, O = APERTURA
+- Columna "Símbolo": "TICKER DDMMMYY STRIKE P/C"
+- Columna "Productos": cash flow (negativo = pagaste para cerrar, positivo = cobraste al abrir)
+- Columna "Básico": prima original cobrada al abrir (solo aparece en cierres)
+- Columna "PyG realizadas": beneficio neto final
+
+FORMATO MÓVIL (cards con Vendido/Comprado):
+- "Vendido" + Put/Call + SIN PyG → APERTURA posición corta (VPUT o VCALL)
+- "Comprado" + Put/Call + CON PyG → CIERRE posición corta (VPUT o VCALL)
+- "Comprado" + Put/Call + SIN PyG → APERTURA posición larga (CPUT o CCALL)
+- "Vendido" + Put/Call + CON PyG → CIERRE posición larga
+- Precio mostrado como "$X.XX" = por acción, "$XXX" debajo = total contrato
+
+PARSEAR SÍMBOLO (ambos formatos):
+"MA JUL 17 '26 465 Put" → ticker=MA, vencimiento=2026-07-17, strike=465, Put
+"ACN JUN 26 '26 127 Call" → ticker=ACN, vencimiento=2026-06-26, strike=127, Call
+"BLK 17JUL26 910 P" → ticker=BLK, vencimiento=2026-07-17, strike=910, Put
+
+ESTRATEGIA:
+- Apertura Put vendida = VPUT | Apertura Call vendida = VCALL
+- Apertura Put comprada = CPUT | Apertura Call comprada = CCALL
+- Cierre de VPUT → estrategia=VPUT (misma que la apertura original)
+
+Si hay MÚLTIPLES operaciones en la imagen, extrae SOLO la que tenga PyG más destacada (en verde grande) o la primera de la lista.
 
 Devuelve SOLO JSON válido sin backticks ni texto adicional:
 {"tipo":"APERTURA o CIERRE","estrategia":"VPUT o VCALL o CPUT o CCALL o COMBO","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"notas":""}
 
-Reglas:
-- Si es apertura: rellena ticker, fecha, vencimiento, strike, prima. precio_cierre y beneficio = 0.
-- Si es cierre: rellena ticker, fecha, vencimiento, strike, precio_cierre, beneficio. prima puede ser 0.
-- prima y precio_cierre son precio por acción (NO multiplicado por 100)
-- VPUT=venta put, VCALL=venta call, CPUT=compra put, CCALL=compra call
-- Si algo no está claro déjalo en 0 o vacío` }
+- prima = total contrato en $ al abrir (ej: 473.94 o 900)
+- precio_cierre = total contrato en $ al cerrar (ej: 210)
+- beneficio = PyG neto en $ (puede ser negativo)` }
           ]}]
         })
       })
@@ -564,6 +633,14 @@ Reglas:
     } catch (e) { setAnalyzeMsg('❌ ' + e.message) }
     finally { setAnalyzing(false) }
   }
+
+  const [mesFiltro, setMesFiltro] = useState('TODOS')
+
+  // Meses únicos con operaciones cerradas (para filtro)
+  const mesesDisponibles = [...new Set(
+    ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA' && o.fecha_cierre)
+       .map(o => o.fecha_cierre.slice(0, 7))
+  )].sort().reverse()
 
   // Stats rápidas
   const abiertas = ops.filter(o => o.cuenta === cuenta && o.estado === 'ABIERTA')
@@ -657,13 +734,25 @@ Reglas:
               <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
                 onChange={e => { const f = e.target.files[0]; if (f) analyzeIB(f) }} />
 
-              {/* Filtros */}
+              {/* Filtros estado */}
               {['TODAS', 'ABIERTA', 'CERRADA'].map(f => (
-                <button key={f} onClick={() => setFiltro(f)}
+                <button key={f} onClick={() => { setFiltro(f); if (f !== 'CERRADA') setMesFiltro('TODOS') }}
                   style={{ padding: '6px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: `1px solid ${filtro === f ? C.acc : C.brd}`, background: filtro === f ? C.acc + '22' : 'transparent', color: filtro === f ? C.acc : C.dim }}>
                   {f}
                 </button>
               ))}
+
+              {/* Filtro por mes (solo visible cuando hay cerradas) */}
+              {(filtro === 'CERRADA' || filtro === 'TODAS') && mesesDisponibles.length > 0 && (
+                <select value={mesFiltro} onChange={e => setMesFiltro(e.target.value)}
+                  style={{ background: C.surf2, border: `1px solid ${mesFiltro !== 'TODOS' ? C.gold : C.brd}`, color: mesFiltro !== 'TODOS' ? C.gold : C.dim, borderRadius: 20, padding: '5px 12px', fontSize: 11, outline: 'none', cursor: 'pointer' }}>
+                  <option value="TODOS">📅 Todos los meses</option>
+                  {mesesDisponibles.map(m => {
+                    const label = new Date(m + '-15').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
+                    return <option key={m} value={m}>{label}</option>
+                  })}
+                </select>
+              )}
 
               <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar ticker..."
                 style={{ background: C.surf, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 20, padding: '6px 14px', fontSize: 12, outline: 'none', width: 140 }} />
@@ -707,10 +796,10 @@ Reglas:
 
             {/* Cabecera tabla */}
             <div style={{ background: C.surf, borderRadius: '10px 10px 0 0', border: `1px solid ${C.brd}`, borderBottom: 'none' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '90px 60px 70px 80px 55px 65px 65px 80px 90px 70px 60px 50px',
+              <div style={{ display: 'grid', gridTemplateColumns: GRID,
                 gap: 8, padding: '8px 12px', fontSize: 9, color: C.dim, fontWeight: 700, textTransform: 'uppercase' }}>
-                {['Apertura','Ticker','Estrategia','Vencto.','Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Días','Estado',''].map(h => (
-                  <span key={h} style={{ textAlign: ['Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Días'].includes(h) ? 'right' : 'left' }}>{h}</span>
+                {['Apertura','Ticker','Estrategia','Vencto.','Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes','Estado',''].map(h => (
+                  <span key={h} style={{ textAlign: ['Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes'].includes(h) ? 'center' : 'left' }}>{h}</span>
                 ))}
               </div>
             </div>
