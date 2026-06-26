@@ -28,14 +28,23 @@ function calcOp(op) {
   // obj_precio = total a pagar al cerrar para conseguir el objetivo de beneficio
   const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * (1 - op.objetivo_pct / 100)).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
-  if (op.estado === 'CERRADA' && op.precio_cierre != null && op.prima != null && beneficio == null) {
-    // beneficio = prima_total - coste_cierre_total (ambos en dólares totales)
-    beneficio = parseFloat((op.prima - op.precio_cierre).toFixed(2))
+  let precio_cierre = op.precio_cierre != null ? op.precio_cierre : null
+
+  if (op.estado === 'CERRADA' && op.prima != null) {
+    // Derivar beneficio desde precio_cierre si falta
+    if (beneficio == null && precio_cierre != null) {
+      beneficio = parseFloat((op.prima - precio_cierre).toFixed(2))
+    }
+    // Derivar precio_cierre desde beneficio si falta (o recalcular siempre para sanear datos viejos)
+    if (beneficio != null) {
+      precio_cierre = parseFloat((op.prima - beneficio).toFixed(2))
+    }
   }
+
   const d = dias(op.fecha_apertura, op.fecha_cierre)
   const rent_total = beneficio != null && exposicion ? parseFloat((beneficio / exposicion * 100).toFixed(4)) : null
   const rent_anual = rent_total != null && d > 0 ? parseFloat((rent_total * 365 / d).toFixed(2)) : null
-  return { ...op, exposicion, obj_precio, beneficio, dias: d, rent_total, rent_anual }
+  return { ...op, exposicion, obj_precio, beneficio, precio_cierre, dias: d, rent_total, rent_anual }
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -312,8 +321,8 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
               ['Vencimiento', fmtDate(op.vencimiento)],
               ['Fecha cierre', fmtDate(op.fecha_cierre)],
               ['Strike', op.strike ?? '—'],
-              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)}` : '—'],
-              ['Precio cierre', op.precio_cierre != null ? fmtNum(op.precio_cierre) : '—'],
+              ['Prima cobrada (total $)', op.prima != null ? `${fmtNum(op.prima)}` : '—'],
+              ['Precio cierre (total $)', op.precio_cierre != null ? fmtNum(op.precio_cierre) : '—'],
               ['Objetivo cierre', op.obj_precio != null ? fmtNum(op.obj_precio) : '—'],
               ['Margen req.', op.margen != null ? `${fmtNum(op.margen)}` : '—'],
               ['Exposición (×100)', op.exposicion != null ? fmtNum(op.exposicion) : '—'],
@@ -429,7 +438,7 @@ function ResultsTab({ ops, cuenta }) {
     const k = mesKey(fechaRef)
     if (!k) return
     if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(fechaRef) }
-    byMes[k].total += op.beneficio
+    byMes[k].total = Math.round((byMes[k].total + op.beneficio) * 100) / 100
     byMes[k].count += 1
   })
   const meses = Object.entries(byMes).sort(([a], [b]) => a.localeCompare(b))
@@ -507,11 +516,15 @@ export default function App() {
   const [showCfg, setShowCfg] = useState(false)
   const fileRef = useRef()
 
-  // Cargar datos
+  // Cargar datos + migrar datos viejos de localStorage (precio_cierre incorrecto, etc.)
   useEffect(() => {
     const saved = LS.get('diario-ops-v1')
     if (saved && saved.length > 0) {
-      setOps(saved)
+      // Migración: recalcular precio_cierre y campos derivados para sanear datos viejos
+      // precio_cierre siempre se deriva de prima - beneficio (beneficio es la fuente de verdad)
+      const migrated = saved.map(op => calcOp({ ...op }))
+      setOps(migrated)
+      LS.set('diario-ops-v1', migrated)
     } else {
       const seed = buildSeed()
       setOps(seed)
@@ -528,7 +541,7 @@ export default function App() {
     else if (tab === 'maria' || tab === 'res-maria') { if (o.cuenta !== 'maria') return false }
     else return true
     if (filtro !== 'TODAS' && o.estado !== filtro) return false
-    if (mesFiltro !== 'TODOS' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
+    if (mesFiltro !== 'TODOS' && o.estado === 'CERRADA' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
     return true
   }).sort((a, b) => {
@@ -741,7 +754,7 @@ Devuelve SOLO JSON válido sin backticks ni texto adicional:
                 </button>
               ))}
 
-              {/* Filtro por mes (solo visible cuando hay cerradas) */}
+              {/* Filtro por mes (visible en modo CERRADA o TODAS) */}
               {(filtro === 'CERRADA' || filtro === 'TODAS') && mesesDisponibles.length > 0 && (
                 <select value={mesFiltro} onChange={e => setMesFiltro(e.target.value)}
                   style={{ background: C.surf2, border: `1px solid ${mesFiltro !== 'TODOS' ? C.gold : C.brd}`, color: mesFiltro !== 'TODOS' ? C.gold : C.dim, borderRadius: 20, padding: '5px 12px', fontSize: 11, outline: 'none', cursor: 'pointer' }}>
