@@ -1,0 +1,11 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/analyze.js": { "maxDuration": 30 }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
