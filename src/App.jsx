@@ -499,6 +499,7 @@ export default function App() {
   const [editOp, setEditOp] = useState(null)
   const [closeOp, setCloseOp] = useState(null)
   const [filtro, setFiltro] = useState('TODAS')
+  const [mesFiltro, setMesFiltro] = useState('TODOS')
   const [busqueda, setBusqueda] = useState('')
   const [apiKey, setApiKey] = useState(LS.get('ib-api-key') || '')
   const [analyzing, setAnalyzing] = useState(false)
@@ -633,8 +634,6 @@ Devuelve SOLO JSON válido sin backticks ni texto adicional:
     } catch (e) { setAnalyzeMsg('❌ ' + e.message) }
     finally { setAnalyzing(false) }
   }
-
-  const [mesFiltro, setMesFiltro] = useState('TODOS')
 
   // Meses únicos con operaciones cerradas (para filtro)
   const mesesDisponibles = [...new Set(
