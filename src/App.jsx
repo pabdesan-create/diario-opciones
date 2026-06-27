@@ -123,6 +123,15 @@ function buildSeed() {
     { mes:'Junio', estado:'CERRADA', fecha:46178, estrategia:'VPUT', ticker:'TSM', venc:46220, strike:380, prima:954, obj_pct:45, cierre:46188, benef:402.13, precio100:38000, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'PYPL', venc:46191, strike:43.5, prima:24, obj_pct:45, cierre:46190, benef:10.9, precio100:4350, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'NU', venc:46199, strike:12, prima:39, obj_pct:45, cierre:46190, benef:-93.1, precio100:1200, dias:null },
+    // Operaciones Junio Pablo faltantes del seed original (detectadas vs Excel)
+    { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'AWK', venc:46191, strike:120, prima:152, obj_pct:45, cierre:46178, benef:82.94, precio100:12000 },
+    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASTS', venc:46191, strike:null, prima:null, obj_pct:45, cierre:46189, benef:110.73, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46170, estrategia:'VPUT', ticker:'OMC', venc:46191, strike:70, prima:104, obj_pct:45, cierre:46181, benef:62.00, precio100:7000 },
+    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASML', venc:46220, strike:null, prima:null, obj_pct:45, cierre:46189, benef:598.32, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASML', venc:46164, strike:null, prima:3899, obj_pct:45, cierre:46174, benef:1098.37, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASTS', venc:46164, strike:null, prima:928, obj_pct:45, cierre:46174, benef:-0.28, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46171, estrategia:'VPUT', ticker:'RMD', venc:46191, strike:185, prima:185, obj_pct:45, cierre:46182, benef:92.90, precio100:18500 },
+    { mes:'Junio', estado:'CERRADA', fecha:46174, estrategia:'VPUT', ticker:'V', venc:46191, strike:295, prima:65, obj_pct:45, cierre:46178, benef:32.12, precio100:29500 },
     // Abiertas
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'VPUT', ticker:'NOW', venc:46220, strike:90, prima:145, obj_pct:45, precio100:9000 },
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'CCALL', ticker:'META', venc:46374, strike:580, prima:8520, obj_pct:45, precio100:58000 },
@@ -516,20 +525,28 @@ export default function App() {
   const [showCfg, setShowCfg] = useState(false)
   const fileRef = useRef()
 
-  // Cargar datos + migrar datos viejos de localStorage (precio_cierre incorrecto, etc.)
+  // Cargar datos + migrar/fusionar con seed actualizado
   useEffect(() => {
+    const seed = buildSeed()
     const saved = LS.get('diario-ops-v1')
-    if (saved && saved.length > 0) {
-      // Migración: recalcular precio_cierre y campos derivados para sanear datos viejos
-      // precio_cierre siempre se deriva de prima - beneficio (beneficio es la fuente de verdad)
-      const migrated = saved.map(op => calcOp({ ...op }))
-      setOps(migrated)
-      LS.set('diario-ops-v1', migrated)
-    } else {
-      const seed = buildSeed()
+
+    if (!saved || saved.length === 0) {
       setOps(seed)
       LS.set('diario-ops-v1', seed)
+      return
     }
+
+    // Fingerprint para identificar ops únicas sin depender del id aleatorio
+    const fp = op => `${op.cuenta}|${op.estrategia}|${op.ticker}|${op.fecha_apertura}|${op.vencimiento}|${op.strike}`
+    const savedSet = new Set(saved.map(fp))
+
+    // Ops del seed que NO están en localStorage (seed fue ampliado después del primer uso)
+    const missing = seed.filter(op => !savedSet.has(fp(op)))
+
+    // Merge: ops guardadas + faltantes, todo recalculado (sanea precio_cierre, rent, etc.)
+    const merged = [...saved, ...missing].map(op => calcOp({ ...op }))
+    setOps(merged)
+    LS.set('diario-ops-v1', merged)
   }, [])
 
   const persist = arr => { setOps(arr); LS.set('diario-ops-v1', arr) }
