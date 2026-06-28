@@ -696,14 +696,18 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
       resultados.forEach(r => {
         if (!r.ticker) return
         if (r.tipo === 'CIERRE' && r.ticker && r.vencimiento) {
-          const op_abierta = ops.find(o =>
-            o.cuenta === cuentaTarget && o.estado === 'ABIERTA' &&
+          const matchKey = o =>
+            o.cuenta === cuentaTarget &&
             o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
             Number(o.strike) === Number(r.strike) &&
             o.vencimiento === r.vencimiento
-          )
+          const op_abierta = ops.find(o => matchKey(o) && o.estado === 'ABIERTA')
+          const op_yacerrada = !op_abierta && ops.find(o => matchKey(o) && o.estado === 'CERRADA')
           if (op_abierta) {
             cierresVinculados.push({ ...op_abierta, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
+          } else if (op_yacerrada) {
+            // Ya estaba cerrada — ignorar silenciosamente pero avisar
+            cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
           } else {
             cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
               fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
@@ -754,17 +758,25 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
         setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + msg)
       }
 
-      // Cierres sin vincular → cola de formularios
-      if (cierresSinVincular.length > 0) {
-        setPendingCierres(cierresSinVincular)
-        setEditOp(cierresSinVincular[0])
+      // Cierres sin vincular → separar los ya cerrados (solo avisar) de los nuevos (formulario)
+      const yacerradas = cierresSinVincular.filter(c => c._yacerrada)
+      const realesNuevos = cierresSinVincular.filter(c => !c._yacerrada)
+
+      if (yacerradas.length > 0) {
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') +
+          `ℹ️ ${yacerradas.length} ya cerrada(s) — se ignoran: ${yacerradas.map(c => c.ticker).join(', ')}`)
+      }
+
+      if (realesNuevos.length > 0) {
+        setPendingCierres(realesNuevos)
+        setEditOp(realesNuevos[0])
         setShowForm(true)
-        const pendMsg = cierresSinVincular.length > 1
-          ? `⚠️ ${cierresSinVincular.length} cierres sin posición abierta [${cuentaTarget}] — completar uno a uno: ${cierresSinVincular.map(c => c.ticker).join(', ')}${convMsg}`
-          : `⚠️ Cierre sin posición abierta [${cuentaTarget}]: ${cierresSinVincular[0].ticker} — completa los datos${convMsg}`
+        const pendMsg = realesNuevos.length > 1
+          ? `⚠️ ${realesNuevos.length} cierres sin posición abierta [${cuentaTarget}] — completar uno a uno: ${realesNuevos.map(c => c.ticker).join(', ')}${convMsg}`
+          : `⚠️ Cierre sin posición abierta [${cuentaTarget}]: ${realesNuevos[0].ticker} — completa los datos${convMsg}`
         setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + pendMsg)
       }
-      if (aperturasSinDup.length === 0 && cierresVinculadosValidos.length === 0 && cierresSinVincular.length === 0 && dupCount === 0) {
+      if (aperturasSinDup.length === 0 && cierresVinculadosValidos.length === 0 && realesNuevos.length === 0 && dupCount === 0 && yacerradas.length === 0) {
         setAnalyzeMsg('⚠️ No se encontraron operaciones nuevas en la imagen')
       }
     } catch (e) { setAnalyzeMsg('❌ ' + e.message) }
@@ -816,6 +828,7 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
 
       {/* CONFIG */}
       {showCfg && (
+        <>
         <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '12px 20px', display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 300, maxWidth: 420 }}>
             <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>🔑 Anthropic API Key</label>
@@ -838,6 +851,68 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
             💾 Guardar
           </button>
         </div>
+        {/* Segunda fila: gestión de datos */}
+        <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '10px 20px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', marginRight: 4 }}>📦 Datos:</span>
+
+          {/* Exportar backup */}
+          <button onClick={() => {
+            const blob = new Blob([JSON.stringify(ops, null, 2)], { type: 'application/json' })
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+            a.download = `diario-opciones-backup-${new Date().toISOString().slice(0,10)}.json`
+            a.click(); URL.revokeObjectURL(a.href)
+          }} style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.grn}`, color: C.grn, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            ⬇ Exportar backup
+          </button>
+
+          {/* Importar backup */}
+          <label style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.acc}`, color: C.acc, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            ⬆ Importar backup
+            <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => {
+              const f = e.target.files[0]; if (!f) return
+              const r = new FileReader()
+              r.onload = ev => {
+                try {
+                  const data = JSON.parse(ev.target.result)
+                  if (!Array.isArray(data)) { alert('JSON inválido: debe ser un array'); return }
+                  if (confirm(`¿Restaurar ${data.length} operaciones? Esto sobreescribirá los datos actuales.`)) {
+                    persist(data.map(o => calcOp({ ...o })))
+                    setShowCfg(false)
+                    alert(`✅ ${data.length} operaciones restauradas`)
+                  }
+                } catch { alert('Error al leer el archivo JSON') }
+              }
+              r.readAsText(f); e.target.value = ''
+            }} />
+          </label>
+
+          {/* Purgar duplicados */}
+          <button onClick={() => {
+            const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+            const seen = new Set(); const limpias = []
+            ops.forEach(o => { const k = fp(o); if (!seen.has(k)) { seen.add(k); limpias.push(o) } })
+            const removed = ops.length - limpias.length
+            if (removed === 0) { alert('✅ No hay duplicados'); return }
+            if (confirm(`Eliminar ${removed} operación(es) duplicada(s)?`)) { persist(limpias); alert(`✅ ${removed} duplicada(s) eliminada(s)`) }
+          }} style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.gold}`, color: C.gold, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            🧹 Purgar duplicados
+          </button>
+
+          {/* Reset al seed */}
+          <button onClick={() => {
+            if (confirm('⚠️ ¿Reset completo al seed? Se perderán todas las operaciones añadidas manualmente. Exporta un backup primero si lo necesitas.')) {
+              const seed = buildSeed()
+              persist(seed)
+              setShowCfg(false)
+              alert(`✅ Reset al seed: ${seed.length} operaciones`)
+            }
+          }} style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            🗑 Reset al seed
+          </button>
+
+          <span style={{ fontSize: 10, color: C.dim, marginLeft: 4 }}>{ops.length} ops en memoria</span>
+        </div>
+        </>
       )}
 
       {/* TABS */}
@@ -931,6 +1006,7 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
                   </div>
                 )}
                 <OpForm
+                  key={editOp?.id || 'new'}
                   initial={editOp || { ...EMPTY, cuenta }}
                   titulo={pendingCierres.length > 0 && editOp
                     ? `⚠️ Cierre sin vincular${pendingCierres.length > 1 ? ` (${pendingCierres.indexOf(editOp) + 1}/${pendingCierres.length})` : ''}: ${editOp.ticker}`
@@ -965,6 +1041,7 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
                   ✅ Cerrando {closeOp.estrategia} {closeOp.ticker} {closeOp.strike} — operación vinculada automáticamente
                 </div>
                 <OpForm
+                  key={closeOp?.id || 'close'}
                   initial={closeOp}
                   titulo="✅ Cerrar operación"
                   onSave={saveOp}
