@@ -258,7 +258,7 @@ const diasVence = venc => {
 }
 const mesCierre = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).replace(' ', "'") : null
 
-const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 60px 75px 60px 50px'
+const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 75px 60px 75px 35px'
 
 // Tabla de operaciones
 function OpRow({ op, onEdit, onDelete, onClose }) {
@@ -291,6 +291,10 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
         </span>
         <span style={{ color: colBenef, textAlign: 'right', fontSize: 11 }}>
           {op.rent_anual != null ? fmtPct(op.rent_anual) : '—'}
+        </span>
+        {/* Fecha cierre */}
+        <span style={{ color: C.dim, fontSize: 11, textAlign: 'center' }}>
+          {op.fecha_cierre ? fmtDate(op.fecha_cierre) : '—'}
         </span>
         {/* Columna combinada: VENCE (abierta) o MES CIERRE (cerrada) */}
         {op.estado === 'ABIERTA' ? (
@@ -515,6 +519,7 @@ export default function App() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeMsg, setAnalyzeMsg] = useState('')
   const [showCfg, setShowCfg] = useState(false)
+  const [pendingCierres, setPendingCierres] = useState([])  // cola de cierres sin vincular
   const [sortCol, setSortCol] = useState('fecha_apertura')
   const [sortDir, setSortDir] = useState('desc')
   const [ibCuenta, setIbCuenta] = useState('pablo')
@@ -568,9 +573,19 @@ export default function App() {
   const saveOp = op => {
     const newOp = { ...op, id: op.id || uid() }
     const idx = ops.findIndex(o => o.id === newOp.id)
-    const arr = idx >= 0 ? ops.map((o, i) => i === idx ? newOp : o) : [...ops, newOp]
+    const arr = idx >= 0 ? ops.map((o, i) => i === idx ? calcOp(newOp) : o) : [...ops, calcOp(newOp)]
     persist(arr)
     setShowForm(false); setEditOp(null); setCloseOp(null)
+    // Avanzar cola de cierres pendientes (sin vincular del screenshot)
+    setPendingCierres(prev => {
+      const remaining = prev.slice(1)
+      if (remaining.length > 0) {
+        setEditOp(remaining[0])
+        setShowForm(true)
+        setAnalyzeMsg(`⚠️ Completar cierre ${remaining.length > 1 ? `(${remaining.length} pendientes)` : ''}: ${remaining[0].ticker} — ${remaining[0].estrategia}`)
+      }
+      return remaining
+    })
   }
 
   const delOp = id => { if (confirm('¿Eliminar operación?')) persist(ops.filter(o => o.id !== id)) }
@@ -696,28 +711,55 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
       })
       const convMsg = convertidas > 0 ? ` (${convertidas} op${convertidas > 1 ? 's' : ''} convertida${convertidas > 1 ? 's' : ''} de ${resultados.find(r => r.moneda && r.moneda !== 'USD')?.moneda || '?'} a USD)` : ''
 
-      // Guardar aperturas directamente
-      if (aperturas.length > 0) {
-        persist([...ops, ...aperturas])
-        setAnalyzeMsg(`✅ ${aperturas.length} apertura(s) [${cuentaTarget}]: ${aperturas.map(a => a.ticker).join(', ')}${convMsg}`)
+      // ── Detección de duplicados ──────────────────────────────────
+      // Fingerprint: misma cuenta+estrategia+ticker+fecha_apertura+vencimiento+strike
+      const fpOp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+      const existingFps = new Set(ops.map(fpOp))
+      const aperturasSinDup = aperturas.filter(a => !existingFps.has(fpOp(a)))
+      const dupCount = aperturas.length - aperturasSinDup.length
+      const dupMsg = dupCount > 0 ? ` (${dupCount} duplicada${dupCount > 1 ? 's' : ''} ignorada${dupCount > 1 ? 's' : ''})` : ''
+
+      // Cierres vinculados: solo aplicar si la op sigue ABIERTA (evita re-cerrar)
+      const cierresVinculadosValidos = cierresVinculados.filter(c => {
+        const orig = ops.find(o => o.id === c.id)
+        return orig && orig.estado === 'ABIERTA'
+      })
+      const dupCierres = cierresVinculados.length - cierresVinculadosValidos.length
+
+      let currentOps = ops
+
+      // Guardar aperturas (sin duplicados)
+      if (aperturasSinDup.length > 0) {
+        currentOps = [...currentOps, ...aperturasSinDup]
+        persist(currentOps)
+        setAnalyzeMsg(`✅ ${aperturasSinDup.length} apertura(s) [${cuentaTarget}]: ${aperturasSinDup.map(a => a.ticker).join(', ')}${dupMsg}${convMsg}`)
+      } else if (dupCount > 0) {
+        setAnalyzeMsg(`ℹ️ ${dupCount} apertura(s) ya existían — no se duplicaron`)
       }
-      // Aplicar cierres vinculados directamente
-      if (cierresVinculados.length > 0) {
-        const updated = ops.map(o => {
-          const c = cierresVinculados.find(c => c.id === o.id)
+
+      // Aplicar cierres vinculados
+      if (cierresVinculadosValidos.length > 0) {
+        currentOps = currentOps.map(o => {
+          const c = cierresVinculadosValidos.find(c => c.id === o.id)
           return c ? calcOp(c) : o
         })
-        persist(updated)
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `✅ ${cierresVinculados.length} cierre(s) [${cuentaTarget}]: ${cierresVinculados.map(c => c.ticker).join(', ')}${convMsg}`)
+        persist(currentOps)
+        const msg = `✅ ${cierresVinculadosValidos.length} cierre(s) [${cuentaTarget}]: ${cierresVinculadosValidos.map(c => c.ticker).join(', ')}${dupCierres > 0 ? ` (${dupCierres} ya cerradas)` : ''}${convMsg}`
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + msg)
       }
-      // Cierres sin vincular → abrir formulario para el primero
+
+      // Cierres sin vincular → cola de formularios
       if (cierresSinVincular.length > 0) {
+        setPendingCierres(cierresSinVincular)
         setEditOp(cierresSinVincular[0])
         setShowForm(true)
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `⚠️ ${cierresSinVincular.length} cierre(s) sin posición abierta [${cuentaTarget}]: ${cierresSinVincular.map(c => c.ticker).join(', ')}${convMsg}`)
+        const pendMsg = cierresSinVincular.length > 1
+          ? `⚠️ ${cierresSinVincular.length} cierres sin posición abierta [${cuentaTarget}] — completar uno a uno: ${cierresSinVincular.map(c => c.ticker).join(', ')}${convMsg}`
+          : `⚠️ Cierre sin posición abierta [${cuentaTarget}]: ${cierresSinVincular[0].ticker} — completa los datos${convMsg}`
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + pendMsg)
       }
-      if (aperturas.length === 0 && cierresVinculados.length === 0 && cierresSinVincular.length === 0) {
-        setAnalyzeMsg('⚠️ No se encontraron operaciones en la imagen')
+      if (aperturasSinDup.length === 0 && cierresVinculadosValidos.length === 0 && cierresSinVincular.length === 0 && dupCount === 0) {
+        setAnalyzeMsg('⚠️ No se encontraron operaciones nuevas en la imagen')
       }
     } catch (e) { setAnalyzeMsg('❌ ' + e.message) }
     finally { setAnalyzing(false) }
@@ -875,11 +917,18 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
             {/* Formulario nueva/editar */}
             {showForm && (
               <div style={{ marginBottom: 16 }}>
+                {pendingCierres.length > 1 && (
+                  <div style={{ background: C.gold + '18', border: `1px solid ${C.gold}40`, borderRadius: 8, padding: '8px 14px', marginBottom: 8, fontSize: 12, color: C.gold }}>
+                    📋 Completando cierre {pendingCierres.indexOf(editOp) + 1} de {pendingCierres.length}: <strong>{editOp?.ticker}</strong> — Guarda y pasará al siguiente automáticamente
+                  </div>
+                )}
                 <OpForm
                   initial={editOp || { ...EMPTY, cuenta }}
-                  titulo={editOp?.id ? '✏️ Editar operación' : '+ Nueva operación'}
+                  titulo={pendingCierres.length > 0 && editOp && !editOp._fromSeed
+                    ? `⚠️ Cierre sin vincular (${pendingCierres.indexOf(editOp) + 1}/${pendingCierres.length}): ${editOp.ticker}`
+                    : editOp?.id ? '✏️ Editar operación' : '+ Nueva operación'}
                   onSave={saveOp}
-                  onCancel={() => { setShowForm(false); setEditOp(null) }} />
+                  onCancel={() => { setShowForm(false); setEditOp(null); setPendingCierres([]) }} />
               </div>
             )}
 
@@ -911,6 +960,7 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
                   { h: 'Obj.cierre', col: null },
                   { h: 'Beneficio', col: 'beneficio' },
                   { h: 'Rent.Anual', col: 'rent_anual' },
+                  { h: 'F.Cierre', col: 'fecha_cierre' },
                   { h: 'Vence/Mes', col: 'vencimiento' },
                   { h: 'Estado', col: null },
                   { h: '', col: null }
