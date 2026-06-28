@@ -623,9 +623,14 @@ TIPO de operación:
 - Vendido + CON PyG verde → CIERRE larga
 - "Expired" o etiquetas C/Ep → CIERRE por expiración
 
-ESTRATEGIA:
-Vendido Put→VPUT, Vendido Call→VCALL, Comprado Put→CPUT, Comprado Call→CCALL
-Expired Put→CPUT, Expired Call→CCALL
+ESTRATEGIA (crítico — la estrategia es siempre la de la POSICIÓN ORIGINAL):
+- APERTURA Vendido Put → VPUT | APERTURA Vendido Call → VCALL
+- APERTURA Comprado Put → CPUT | APERTURA Comprado Call → CCALL
+- CIERRE Comprado Call + PyG → cerrando VCALL → estrategia=VCALL
+- CIERRE Comprado Put + PyG → cerrando VPUT → estrategia=VPUT
+- CIERRE Vendido Call + PyG → cerrando CCALL → estrategia=CCALL
+- CIERRE Vendido Put + PyG → cerrando CPUT → estrategia=CPUT
+- Expired Put → cerrando CPUT → estrategia=CPUT | Expired Call → cerrando CCALL → estrategia=CCALL
 
 FECHA: usa la fecha del encabezado de la página (ej: "June 22, 2026" → 2026-06-22)
 ⚠️ La línea de cabecera con fecha + cifra en verde (ej: "June 22, 2026 $116.12") es el TOTAL DIARIO — NO es una operación, ignórala completamente.
@@ -690,11 +695,12 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
       const aperturas = [], cierresVinculados = [], cierresSinVincular = []
       resultados.forEach(r => {
         if (!r.ticker) return
-        if (r.tipo === 'CIERRE' && r.ticker && r.strike && r.vencimiento) {
+        if (r.tipo === 'CIERRE' && r.ticker && r.vencimiento) {
           const op_abierta = ops.find(o =>
             o.cuenta === cuentaTarget && o.estado === 'ABIERTA' &&
             o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
-            o.strike === r.strike && o.vencimiento === r.vencimiento
+            Number(o.strike) === Number(r.strike) &&
+            o.vencimiento === r.vencimiento
           )
           if (op_abierta) {
             cierresVinculados.push({ ...op_abierta, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
@@ -917,18 +923,38 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
             {/* Formulario nueva/editar */}
             {showForm && (
               <div style={{ marginBottom: 16 }}>
-                {pendingCierres.length > 1 && (
-                  <div style={{ background: C.gold + '18', border: `1px solid ${C.gold}40`, borderRadius: 8, padding: '8px 14px', marginBottom: 8, fontSize: 12, color: C.gold }}>
-                    📋 Completando cierre {pendingCierres.indexOf(editOp) + 1} de {pendingCierres.length}: <strong>{editOp?.ticker}</strong> — Guarda y pasará al siguiente automáticamente
+                {pendingCierres.length > 0 && (
+                  <div style={{ background: C.gold + '18', border: `1px solid ${C.gold}40`, borderRadius: 8, padding: '8px 14px', marginBottom: 8, fontSize: 12, color: C.gold, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>📋 Cierre sin vincular {pendingCierres.length > 1 ? `${pendingCierres.indexOf(editOp) + 1} de ${pendingCierres.length}` : ''}: <strong>{editOp?.ticker}</strong> — Completa los datos y guarda; se irán mostrando automáticamente</span>
+                    <button onClick={() => { setPendingCierres([]); setShowForm(false); setEditOp(null) }}
+                      style={{ background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 11 }}>✕ Omitir todos</button>
                   </div>
                 )}
                 <OpForm
                   initial={editOp || { ...EMPTY, cuenta }}
-                  titulo={pendingCierres.length > 0 && editOp && !editOp._fromSeed
-                    ? `⚠️ Cierre sin vincular (${pendingCierres.indexOf(editOp) + 1}/${pendingCierres.length}): ${editOp.ticker}`
+                  titulo={pendingCierres.length > 0 && editOp
+                    ? `⚠️ Cierre sin vincular${pendingCierres.length > 1 ? ` (${pendingCierres.indexOf(editOp) + 1}/${pendingCierres.length})` : ''}: ${editOp.ticker}`
                     : editOp?.id ? '✏️ Editar operación' : '+ Nueva operación'}
                   onSave={saveOp}
-                  onCancel={() => { setShowForm(false); setEditOp(null); setPendingCierres([]) }} />
+                  onCancel={() => {
+                    if (pendingCierres.length > 0) {
+                      // En modo cola: omitir este y pasar al siguiente
+                      setPendingCierres(prev => {
+                        const remaining = prev.slice(1)
+                        if (remaining.length > 0) {
+                          setEditOp(remaining[0])
+                          setShowForm(true)
+                          setAnalyzeMsg(`⚠️ Omitido. Siguiente: ${remaining[0].ticker}${remaining.length > 1 ? ` (${remaining.length} pendientes)` : ''}`)
+                        } else {
+                          setShowForm(false); setEditOp(null)
+                          setAnalyzeMsg('ℹ️ Todos los cierres procesados')
+                        }
+                        return remaining
+                      })
+                    } else {
+                      setShowForm(false); setEditOp(null)
+                    }
+                  }} />
               </div>
             )}
 
