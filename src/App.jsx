@@ -209,7 +209,7 @@ function buildSeed() {
 const EMPTY = {
   cuenta: 'pablo', estado: 'ABIERTA', fecha_apertura: new Date().toISOString().slice(0,10),
   estrategia: 'VPUT', ticker: '', vencimiento: '', strike: '', prima: '', objetivo_pct: 45,
-  contratos: 1, margen: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
+  contratos: 1, margen: '', comision: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
 }
 
 // ══════════════════════════════════════
@@ -332,6 +332,7 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
               ['Fecha cierre', fmtDate(op.fecha_cierre)],
               ['Strike', op.strike ?? '—'],
               ['Contratos', op.contratos > 1 ? `${op.contratos} contratos` : '1 contrato'],
+              ['Comisión apertura', op.comision != null ? `${fmtNum(op.comision)} $` : '—'],
               ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)} $` : '—'],
               ...(op.contratos > 1 && op.prima != null ? [['Prima / contrato', `${fmtNum(parseFloat((op.prima / op.contratos).toFixed(2)))} $`]] : []),
               ['Precio cierre', op.precio_cierre != null ? `${fmtNum(op.precio_cierre)} $` : '—'],
@@ -390,6 +391,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
         <Input label="Strike" value={f.strike} onChange={upd('strike')} type="number" step="0.5" />
         <Input label="Prima total contrato ($)" value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
         <Input label="Nº contratos" value={f.contratos ?? 1} onChange={upd('contratos')} type="number" step="1" />
+        <Input label="Comisión apertura ($)" value={f.comision ?? ''} onChange={upd('comision')} type="number" step="0.01" placeholder="ej: 0.65" />
         <Input label="Objetivo cierre %" value={f.objetivo_pct} onChange={upd('objetivo_pct')} type="number" step="1" />
         <Input label="Margen requerido ($)" value={f.margen} onChange={upd('margen')} type="number" step="1" />
       </div>
@@ -429,6 +431,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
         <button onClick={() => onSave(calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null,
           contratos: +f.contratos || 1,
+          comision: +f.comision || null,
           objetivo_pct: +f.objetivo_pct || 45, margen: +f.margen || null,
           precio_cierre: +f.precio_cierre || null,
           beneficio: f.beneficio !== '' && f.beneficio != null ? +f.beneficio : null,
@@ -580,7 +583,11 @@ export default function App() {
     if (aVal == null && bVal == null) return 0
     if (aVal == null) return 1
     if (bVal == null) return -1
-    const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal) : aVal - bVal
+    // Columnas de fecha: comparación directa de strings ISO (yyyy-mm-dd) — evita localeCompare numérico
+    const isDateCol = ['fecha_apertura', 'fecha_cierre', 'vencimiento'].includes(sortCol)
+    const cmp = isDateCol
+      ? (aVal > bVal ? 1 : aVal < bVal ? -1 : 0)
+      : typeof aVal === 'string' ? aVal.localeCompare(bVal) : aVal - bVal
     return sortDir === 'asc' ? cmp : -cmp
   })
 
@@ -618,8 +625,50 @@ export default function App() {
         body: JSON.stringify({
           model: 'claude-sonnet-4-6', max_tokens: 1000, temperature: 0,
           messages: [{ role: 'user', content: [
+            { type: 'text', text: `INSTRUCCIONES CRÍTICAS — lee esto ANTES de ver la imagen.
+
+Para cada card en el screenshot de IB mobile, sigue OBLIGATORIAMENTE estos 2 pasos:
+
+PASO 1 — ¿Hay número con COLOR al final del card?
+  Busca si existe una cifra en VERDE (ej: $118.59, $16.43, $0.9) o ROJO (ej: -$80.75) al final de la card.
+  - SÍ existe color → es un CIERRE
+  - NO existe color (solo precios en gris) → es una APERTURA
+
+PASO 2 — Asigna la estrategia según la tabla:
+
+  Acción   | PASO1    | tipo     | Put  | Call
+  ---------|----------|----------|------|------
+  Vendido  | NO color | APERTURA | VPUT | VCALL
+  Comprado | NO color | APERTURA | CPUT | CCALL
+  Vendido  | SÍ color | CIERRE   | CPUT | CCALL
+  Comprado | SÍ color | CIERRE   | VPUT | VCALL
+  Expired  | verde    | CIERRE   | VPUT | VCALL  ← IB ya muestra PyG neto correcto, úsalo
+  Expired  | rojo     | CIERRE   | CPUT | CCALL  ← ídem
+  Assigned | $0       | CIERRE   | VPUT | VCALL  (assigned=true, beneficio=0, la app lo calcula)
+
+EJEMPLOS con sus resultados:
+- MA JUL17 465 Put / Comprado 1 / $200 / $118.59 VERDE → PASO1=SÍ → CIERRE VPUT, beneficio=118.59, precio_cierre=200
+- CMCSA JUL17 24 Put / Comprado 1 / $158 / $0.9 VERDE → PASO1=SÍ → CIERRE VPUT, beneficio=0.9, precio_cierre=158
+- PYPL Expired 1 / $0 / $16.43 VERDE → PASO1=SÍ → CIERRE VCALL, beneficio=16.43, precio_cierre=0, assigned=false
+- NU Assigned 1 / $0 → sin PyG → CIERRE VCALL, assigned=true, beneficio=0
+- BLK JUL17 910 Put / Vendido 1 / $900 / sin color → PASO1=NO → APERTURA VPUT, prima=900
+
+FECHAS: múltiples secciones posibles. Usa la fecha de cada sección para cada card.
+⚠️ Líneas como "June 26, 2026 €104.17" son TOTALES DIARIOS — ignóralas.
+
+SÍMBOLO: "JUL 17 '26 465 Put" → vencimiento=2026-07-17, strike=465, Put
+MONEDA: $=USD, €=EUR, £=GBP
+contratos = número tras Vendido/Comprado/Assigned/Expired
+
+VALORES:
+- CIERRE: beneficio=color final, precio_cierre=total gris, prima=0
+- APERTURA: prima=total gris, beneficio=0, precio_cierre=0
+- Número pequeño cursiva ($0.63, $1.05) = comisión → NO incluir
+
+Ahora analiza la imagen siguiente y devuelve SOLO JSON sin texto adicional ni backticks:
+[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","assigned":false,"notas":""}]` },
             { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data } },
-            { type: 'text', text: `Analiza este screenshot de la app móvil de Interactive Brokers y extrae TODAS las operaciones con opciones.
+            { type: 'text', text: `Aplica exactamente las instrucciones anteriores a esta imagen.
 
 ESTRUCTURA DE CADA CARD:
 - Línea 1: TICKER + exchange
@@ -723,11 +772,16 @@ assigned=true SOLO para Assigned o Expired (la app calculará el beneficio autom
             cierresVinculados.push({
               ...op_abierta,
               fecha_cierre: r.fecha,
-              // Adjudicación: prima total = beneficio (opción expiró asignada, se contabiliza como prima cobrada íntegra)
+              // Adjudicación: prima - comisión apertura = beneficio real
+              // Expiración: IB ya muestra el beneficio neto correcto → r.beneficio
               precio_cierre: r.assigned ? 0 : r.precio_cierre,
-              beneficio: r.assigned ? op_abierta.prima : r.beneficio,
+              beneficio: r.assigned
+                ? parseFloat(((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2))
+                : r.beneficio,
               estado: 'CERRADA',
-              notas: r.assigned ? `Adjudicación (${r.fecha}) — prima ${op_abierta.prima}$ como beneficio` : (op_abierta.notas || '')
+              notas: r.assigned
+                ? `Adjudicación — prima ${op_abierta.prima}$ - comisión ${op_abierta.comision || 0}$ = ${((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2)}$`
+                : (op_abierta.notas || '')
             })
           } else if (op_yacerrada) {
             // Ya estaba cerrada — ignorar silenciosamente pero avisar
