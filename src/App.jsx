@@ -261,7 +261,7 @@ const mesCierre = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'sho
 const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 75px 60px 75px 35px'
 
 // Tabla de operaciones
-function OpRow({ op, onEdit, onDelete, onClose }) {
+function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
   const [exp, setExp] = useState(false)
   const neg = op.beneficio != null && op.beneficio < 0
   const colBenef = op.beneficio == null ? C.dim : neg ? C.red : C.grn
@@ -273,9 +273,10 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
 
   return (
     <div style={{ borderBottom: `1px solid ${C.brd}`, transition: 'background .1s',
-      ...(alertaVence && { boxShadow: `inset 3px 0 0 ${dv <= 0 ? C.red : '#f97316'}` }) }}
-      onMouseEnter={e => e.currentTarget.style.background = C.surf2}
-      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+      ...(isNew && { boxShadow: `inset 3px 0 0 ${C.grn}`, background: C.grn + '08' }),
+      ...(alertaVence && !isNew && { boxShadow: `inset 3px 0 0 ${dv <= 0 ? C.red : '#f97316'}` }) }}
+      onMouseEnter={e => e.currentTarget.style.background = isNew ? C.grn + '15' : C.surf2}
+      onMouseLeave={e => e.currentTarget.style.background = isNew ? C.grn + '08' : 'transparent'}>
       <div onClick={() => setExp(e => !e)}
         style={{ display: 'grid', gridTemplateColumns: GRID,
           gap: 8, padding: '8px 12px', cursor: 'pointer', alignItems: 'center', fontSize: 12 }}>
@@ -283,6 +284,7 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
         <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
           <Badge text={op.ticker} color={C.acc} />
           {op.contratos > 1 && <span style={{ fontSize: 9, color: C.gold, fontWeight: 700 }}>×{op.contratos}</span>}
+          {isNew && <span style={{ fontSize: 8, background: C.grn, color: '#000', borderRadius: 3, padding: '1px 4px', fontWeight: 800 }}>NEW</span>}
         </span>
         <Badge text={op.estrategia} color={estratColor(op.estrategia)} />
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.vencimiento)}</span>
@@ -534,6 +536,8 @@ export default function App() {
   const [ibCuenta, setIbCuenta] = useState('pablo')
   const [eurUsd, setEurUsd] = useState(() => parseFloat(LS.get('eur-usd') || '1.09'))
   const [gbpUsd, setGbpUsd] = useState(() => parseFloat(LS.get('gbp-usd') || '1.27'))
+  const [lastBatch, setLastBatch] = useState(new Set()) // IDs del último screenshot
+  const [soloNuevas, setSoloNuevas] = useState(false)   // filtro "ver solo nuevas"
   const fileRef = useRef()
 
   // Cargar datos
@@ -563,6 +567,7 @@ export default function App() {
     if (filtro !== 'TODAS' && o.estado !== filtro) return false
     if (mesFiltro !== 'TODOS' && o.estado === 'CERRADA' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
+    if (soloNuevas && !lastBatch.has(o.id)) return false
     return true
   }).sort((a, b) => {
     // Abiertas siempre primero (a menos que se ordene por un campo numérico)
@@ -756,9 +761,11 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
       const dupCierres = cierresVinculados.length - cierresVinculadosValidos.length
 
       let currentOps = ops
+      const batchIds = new Set()
 
       // Guardar aperturas (sin duplicados)
       if (aperturasSinDup.length > 0) {
+        aperturasSinDup.forEach(a => batchIds.add(a.id))
         currentOps = [...currentOps, ...aperturasSinDup]
         persist(currentOps)
         setAnalyzeMsg(`✅ ${aperturasSinDup.length} apertura(s) [${cuentaTarget}]: ${aperturasSinDup.map(a => a.ticker).join(', ')}${dupMsg}${convMsg}`)
@@ -768,6 +775,7 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
 
       // Aplicar cierres vinculados
       if (cierresVinculadosValidos.length > 0) {
+        cierresVinculadosValidos.forEach(c => batchIds.add(c.id))
         currentOps = currentOps.map(o => {
           const c = cierresVinculadosValidos.find(c => c.id === o.id)
           return c ? calcOp(c) : o
@@ -775,6 +783,12 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
         persist(currentOps)
         const msg = `✅ ${cierresVinculadosValidos.length} cierre(s) [${cuentaTarget}]: ${cierresVinculadosValidos.map(c => c.ticker).join(', ')}${dupCierres > 0 ? ` (${dupCierres} ya cerradas)` : ''}${convMsg}`
         setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + msg)
+      }
+
+      // Actualizar el último batch para resaltado
+      if (batchIds.size > 0) {
+        setLastBatch(batchIds)
+        setSoloNuevas(true) // auto-filtrar a las nuevas
       }
 
       // Cierres sin vincular → separar los ya cerrados (solo avisar) de los nuevos (formulario)
@@ -1002,6 +1016,17 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
               <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar ticker..."
                 style={{ background: C.surf, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 20, padding: '6px 14px', fontSize: 12, outline: 'none', width: 140 }} />
 
+              {/* Filtro últimas operaciones del screenshot */}
+              {lastBatch.size > 0 && (
+                <button onClick={() => setSoloNuevas(v => !v)}
+                  style={{ padding: '6px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                    border: `1px solid ${soloNuevas ? C.grn : C.brd}`,
+                    background: soloNuevas ? C.grn + '22' : 'transparent',
+                    color: soloNuevas ? C.grn : C.dim }}>
+                  {soloNuevas ? `📸 Nuevas (${lastBatch.size}) ✓` : `📸 Ver nuevas (${lastBatch.size})`}
+                </button>
+              )}
+
               <span style={{ fontSize: 11, color: C.dim }}>{opsTab.length} operaciones</span>
             </div>
 
@@ -1113,6 +1138,7 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
               )}
               {opsTab.map(op => (
                 <OpRow key={op.id} op={op}
+                  isNew={lastBatch.has(op.id)}
                   onEdit={op => { setEditOp(op); setShowForm(true); setCloseOp(null) }}
                   onDelete={delOp}
                   onClose={op => { setCloseOp({ ...op, estado: 'CERRADA', fecha_cierre: new Date().toISOString().slice(0,10) }); setShowForm(false) }} />
