@@ -541,25 +541,83 @@ export default function App() {
   const [gbpUsd, setGbpUsd] = useState(() => parseFloat(LS.get('gbp-usd') || '1.27'))
   const [lastBatch, setLastBatch] = useState(new Set()) // IDs del último screenshot
   const [soloNuevas, setSoloNuevas] = useState(false)   // filtro "ver solo nuevas"
+  const [githubToken, setGithubToken] = useState(LS.get('gh-token') || '')
+  const [gistId, setGistId] = useState(LS.get('gist-id') || '')
+  const [syncStatus, setSyncStatus] = useState('')
+  const syncTimer = useRef(null)
   const fileRef = useRef()
 
   // Cargar datos
+  // ── GitHub Gist sync (datos entre dispositivos) ──────────────────
+  const loadFromGist = async () => {
+    const tok = LS.get('gh-token'), id = LS.get('gist-id')
+    if (!tok || !id) return null
+    try {
+      const r = await fetch(`https://api.github.com/gists/${id}`, { headers: { Authorization: `Bearer ${tok}` } })
+      if (!r.ok) return null
+      const data = await r.json()
+      const content = data.files?.['diario-opciones.json']?.content
+      return content ? JSON.parse(content) : null
+    } catch { return null }
+  }
+
+  const syncToGist = async (arr) => {
+    const tok = LS.get('gh-token')
+    if (!tok) return
+    const content = JSON.stringify(arr)
+    try {
+      let id = LS.get('gist-id')
+      if (!id) {
+        const r = await fetch('https://api.github.com/gists', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: 'Diario de Opciones — sync automático', public: false,
+            files: { 'diario-opciones.json': { content } } })
+        })
+        const data = await r.json()
+        if (data.id) { LS.set('gist-id', data.id); setGistId(data.id); id = data.id }
+      } else {
+        await fetch(`https://api.github.com/gists/${id}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: { 'diario-opciones.json': { content } } })
+        })
+      }
+      setSyncStatus(`☁️ ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`)
+    } catch { setSyncStatus('⚠️ Error sync') }
+  }
+
   useEffect(() => {
-    const seed = buildSeed()
-    const saved = LS.get('diario-ops-v1')
-    if (!saved || saved.length === 0) {
-      setOps(seed); LS.set('diario-ops-v1', seed); return
+    const init = async () => {
+      const seed = buildSeed()
+      const local = LS.get('diario-ops-v1')
+      // Intentar cargar desde Gist (puede tener datos de otro dispositivo)
+      const cloud = await loadFromGist()
+      // Usar la versión con más ops (la más actualizada)
+      let base = local
+      if (cloud && Array.isArray(cloud) && cloud.length > (local?.length || 0)) {
+        base = cloud
+        LS.set('diario-ops-v1', cloud)
+        setSyncStatus(`☁️ Cargado desde Gist (${cloud.length} ops)`)
+      }
+      if (!base || base.length === 0) {
+        setOps(seed); LS.set('diario-ops-v1', seed); return
+      }
+      const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+      const baseSet = new Set(base.map(fp))
+      const missing = seed.filter(o => !baseSet.has(fp(o)))
+      const merged = [...base, ...missing].map(o => calcOp({ ...o }))
+      setOps(merged); LS.set('diario-ops-v1', merged)
     }
-    // Merge: añadir ops del seed que falten en localStorage (seed ampliado tras primer uso)
-    const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-    const savedSet = new Set(saved.map(fp))
-    const missing = seed.filter(o => !savedSet.has(fp(o)))
-    // Recalcular campos derivados (sana precio_cierre viejos) + añadir faltantes
-    const merged = [...saved, ...missing].map(o => calcOp({ ...o }))
-    setOps(merged); LS.set('diario-ops-v1', merged)
+    init()
   }, [])
 
-  const persist = arr => { setOps(arr); LS.set('diario-ops-v1', arr) }
+  const persist = arr => {
+    setOps(arr); LS.set('diario-ops-v1', arr)
+    // Sync a GitHub Gist con debounce de 3s para no saturar la API
+    if (syncTimer.current) clearTimeout(syncTimer.current)
+    syncTimer.current = setTimeout(() => syncToGist(arr), 3000)
+  }
   const cuenta = tab === 'pablo' || tab === 'res-pablo' ? 'pablo' : 'maria'
 
   // Filtrar operaciones
@@ -757,7 +815,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
       })
 
       // Procesar cada operación extraída
-      const aperturas = [], cierresVinculados = [], cierresSinVincular = []
+      const aperturas = [], cierresVinculados = [], cierresSinVincular = [], actualizaciones = []
       resultados.forEach(r => {
         if (!r.ticker) return
         if (r.tipo === 'CIERRE' && r.ticker && r.vencimiento) {
@@ -772,8 +830,6 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
             cierresVinculados.push({
               ...op_abierta,
               fecha_cierre: r.fecha,
-              // Si assigned=true pero IB muestra beneficio real → era Expired, no Assigned → usar beneficio de IB
-              // Si assigned=true y beneficio=0 → es Assigned real → calcular prima - comision
               precio_cierre: (r.assigned && !r.beneficio) ? 0 : r.precio_cierre,
               beneficio: r.assigned && !r.beneficio
                 ? parseFloat(((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2))
@@ -784,17 +840,17 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
                 : (op_abierta.notas || '')
             })
           } else if (op_yacerrada) {
-            // Ya estaba cerrada — comprobar si el beneficio difiere del detectado en IB
-            const beneficioDetectado = r.assigned ? null : r.beneficio
+            // Ya cerrada — si el beneficio de IB difiere, corregir automáticamente
+            const beneficioDetectado = (r.assigned && !r.beneficio) ? null : r.beneficio
             const difiere = beneficioDetectado != null &&
               Math.abs((op_yacerrada.beneficio || 0) - beneficioDetectado) > 0.01
             if (difiere) {
-              // Actualizar beneficio con el valor correcto de IB
-              cierresVinculados.push({
+              // Lista separada — se aplica sin pasar por el filtro ABIERTA
+              actualizaciones.push({
                 ...op_yacerrada,
                 beneficio: beneficioDetectado,
                 precio_cierre: r.precio_cierre || op_yacerrada.precio_cierre,
-                notas: `Beneficio actualizado desde IB: ${beneficioDetectado}$ (antes: ${op_yacerrada.beneficio}$)`
+                notas: `Beneficio corregido desde IB: ${beneficioDetectado}$ (antes: ${op_yacerrada.beneficio}$)`
               })
             } else {
               cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
@@ -843,7 +899,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
         setAnalyzeMsg(`ℹ️ ${dupCount} apertura(s) ya existían — no se duplicaron`)
       }
 
-      // Aplicar cierres vinculados
+      // Aplicar cierres vinculados (de ABIERTAS)
       if (cierresVinculadosValidos.length > 0) {
         cierresVinculadosValidos.forEach(c => batchIds.add(c.id))
         currentOps = currentOps.map(o => {
@@ -851,14 +907,22 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
           return c ? calcOp(c) : o
         })
         persist(currentOps)
-        const nuevos = cierresVinculadosValidos.filter(c => !c.notas?.includes('actualizado desde IB'))
-        const actualizados = cierresVinculadosValidos.filter(c => c.notas?.includes('actualizado desde IB'))
-        let msg = ''
-        if (nuevos.length > 0) msg += `✅ ${nuevos.length} cierre(s) [${cuentaTarget}]: ${nuevos.map(c => c.ticker).join(', ')}`
-        if (actualizados.length > 0) msg += (msg ? ' · ' : '') + `🔄 ${actualizados.length} beneficio(s) corregido(s) [${cuentaTarget}]: ${actualizados.map(c => c.ticker).join(', ')}`
+        let msg = `✅ ${cierresVinculadosValidos.length} cierre(s) [${cuentaTarget}]: ${cierresVinculadosValidos.map(c => c.ticker).join(', ')}`
         if (dupCierres > 0) msg += ` (${dupCierres} ya cerradas sin cambios)`
         msg += convMsg
         setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + msg)
+      }
+
+      // Aplicar correcciones de beneficio (ya-cerradas con beneficio incorrecto)
+      if (actualizaciones.length > 0) {
+        actualizaciones.forEach(a => batchIds.add(a.id))
+        currentOps = currentOps.map(o => {
+          const a = actualizaciones.find(a => a.id === o.id)
+          return a ? calcOp(a) : o
+        })
+        persist(currentOps)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') +
+          `🔄 ${actualizaciones.length} beneficio(s) corregido(s) [${cuentaTarget}]: ${actualizaciones.map(a => a.ticker).join(', ')}`)
       }
 
       // Actualizar el último batch para resaltado
@@ -1020,6 +1084,23 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
           </button>
 
           <span style={{ fontSize: 10, color: C.dim, marginLeft: 4 }}>{ops.length} ops en memoria</span>
+        </div>
+        {/* Tercera fila: sync entre dispositivos */}
+        <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '10px 20px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: C.acc, fontWeight: 700, textTransform: 'uppercase', marginRight: 4 }}>☁️ Sync entre PCs:</span>
+          <div style={{ flex: 1, minWidth: 280, maxWidth: 420 }}>
+            <input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)}
+              placeholder="GitHub Personal Access Token (scope: gist)"
+              style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 6, padding: '6px 10px', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          {gistId && <span style={{ fontSize: 10, color: C.grn }}>Gist: {gistId.slice(0,8)}…</span>}
+          <span style={{ fontSize: 11, color: syncStatus.includes('⚠️') ? '#f97316' : C.grn }}>{syncStatus}</span>
+          <button onClick={() => { LS.set('gh-token', githubToken); syncToGist(ops) }}
+            style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.acc}`, color: C.acc, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            {gistId ? '☁️ Sync ahora' : '☁️ Conectar'}
+          </button>
+          <a href="https://github.com/settings/tokens/new?scopes=gist&description=DiarioOpciones" target="_blank"
+            style={{ fontSize: 10, color: C.dim }}>¿Cómo obtener el token?</a>
         </div>
         </>
       )}
