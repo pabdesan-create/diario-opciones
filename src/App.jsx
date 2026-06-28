@@ -714,7 +714,7 @@ VALORES:
 Devuelve SOLO un array JSON sin texto adicional ni backticks:
 [{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","assigned":false,"notas":""}]
 
-assigned=true SOLO para Assigned o Expired (la app calculará el beneficio automáticamente desde la prima cobrada).` }
+assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=false y pon el beneficio verde de IB en el campo beneficio.` }
           ]}]
         })
       })
@@ -772,20 +772,33 @@ assigned=true SOLO para Assigned o Expired (la app calculará el beneficio autom
             cierresVinculados.push({
               ...op_abierta,
               fecha_cierre: r.fecha,
-              // Adjudicación: prima - comisión apertura = beneficio real
-              // Expiración: IB ya muestra el beneficio neto correcto → r.beneficio
-              precio_cierre: r.assigned ? 0 : r.precio_cierre,
-              beneficio: r.assigned
+              // Si assigned=true pero IB muestra beneficio real → era Expired, no Assigned → usar beneficio de IB
+              // Si assigned=true y beneficio=0 → es Assigned real → calcular prima - comision
+              precio_cierre: (r.assigned && !r.beneficio) ? 0 : r.precio_cierre,
+              beneficio: r.assigned && !r.beneficio
                 ? parseFloat(((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2))
                 : r.beneficio,
               estado: 'CERRADA',
-              notas: r.assigned
+              notas: (r.assigned && !r.beneficio)
                 ? `Adjudicación — prima ${op_abierta.prima}$ - comisión ${op_abierta.comision || 0}$ = ${((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2)}$`
                 : (op_abierta.notas || '')
             })
           } else if (op_yacerrada) {
-            // Ya estaba cerrada — ignorar silenciosamente pero avisar
-            cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
+            // Ya estaba cerrada — comprobar si el beneficio difiere del detectado en IB
+            const beneficioDetectado = r.assigned ? null : r.beneficio
+            const difiere = beneficioDetectado != null &&
+              Math.abs((op_yacerrada.beneficio || 0) - beneficioDetectado) > 0.01
+            if (difiere) {
+              // Actualizar beneficio con el valor correcto de IB
+              cierresVinculados.push({
+                ...op_yacerrada,
+                beneficio: beneficioDetectado,
+                precio_cierre: r.precio_cierre || op_yacerrada.precio_cierre,
+                notas: `Beneficio actualizado desde IB: ${beneficioDetectado}$ (antes: ${op_yacerrada.beneficio}$)`
+              })
+            } else {
+              cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
+            }
           } else {
             cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
               fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
@@ -838,7 +851,13 @@ assigned=true SOLO para Assigned o Expired (la app calculará el beneficio autom
           return c ? calcOp(c) : o
         })
         persist(currentOps)
-        const msg = `✅ ${cierresVinculadosValidos.length} cierre(s) [${cuentaTarget}]: ${cierresVinculadosValidos.map(c => c.ticker).join(', ')}${dupCierres > 0 ? ` (${dupCierres} ya cerradas)` : ''}${convMsg}`
+        const nuevos = cierresVinculadosValidos.filter(c => !c.notas?.includes('actualizado desde IB'))
+        const actualizados = cierresVinculadosValidos.filter(c => c.notas?.includes('actualizado desde IB'))
+        let msg = ''
+        if (nuevos.length > 0) msg += `✅ ${nuevos.length} cierre(s) [${cuentaTarget}]: ${nuevos.map(c => c.ticker).join(', ')}`
+        if (actualizados.length > 0) msg += (msg ? ' · ' : '') + `🔄 ${actualizados.length} beneficio(s) corregido(s) [${cuentaTarget}]: ${actualizados.map(c => c.ticker).join(', ')}`
+        if (dupCierres > 0) msg += ` (${dupCierres} ya cerradas sin cambios)`
+        msg += convMsg
         setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + msg)
       }
 
