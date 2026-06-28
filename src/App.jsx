@@ -625,24 +625,33 @@ ESTRUCTURA DE CADA CARD en IB mobile:
 - Derecha pequeño cursiva: comisión IB ($0.25, $1.10) → IGNORAR
 - Derecha verde: PyG realizado → es el beneficio neto
 
-TIPO de operación:
-- Vendido N + SIN PyG verde → APERTURA corta (VPUT o VCALL), contratos=N
-- Comprado N + CON PyG verde → CIERRE corta, contratos=N
-- Comprado N + SIN PyG verde → APERTURA larga (CPUT o CCALL), contratos=N
-- Vendido N + CON PyG verde → CIERRE larga, contratos=N
-- "Expired N" o etiquetas C/Ep → CIERRE por expiración, contratos=N
+TIPO de operación — REGLA CRÍTICA (solo hay una forma de distinguir apertura de cierre):
+¿Hay un número con COLOR (verde $XX.XX o rojo -$XX.XX) al lado derecho de la card?
+  → SÍ hay número con color = SIEMPRE CIERRE (sin excepción)
+  → NO hay número con color = SIEMPRE APERTURA
 
-ESTRATEGIA (crítico — la estrategia es siempre la de la POSICIÓN ORIGINAL):
-- APERTURA Vendido Put → VPUT | APERTURA Vendido Call → VCALL
-- APERTURA Comprado Put → CPUT | APERTURA Comprado Call → CCALL
-- CIERRE Comprado Call + PyG → cerrando VCALL → estrategia=VCALL
-- CIERRE Comprado Put + PyG → cerrando VPUT → estrategia=VPUT
-- CIERRE Vendido Call + PyG → cerrando CCALL → estrategia=CCALL
-- CIERRE Vendido Put + PyG → cerrando CPUT → estrategia=CPUT
-- Expired Put → cerrando CPUT → estrategia=CPUT | Expired Call → cerrando CCALL → estrategia=CCALL
+Ejemplos:
+- "Comprado 1 ... $40 ... $48.9" (verde) → CIERRE ✓
+- "Comprado 1 ... $206 ... -$80.75" (rojo) → CIERRE ✓ (PyG negativo sigue siendo CIERRE)
+- "Comprado 1 ... $15 ... $16.9" (verde) → CIERRE ✓
+- "Vendido 1 ... $900" (sin color) → APERTURA ✓
+- "Vendido 1 ... $206" (sin color) → APERTURA ✓
 
-FECHA: usa la fecha del encabezado de la página (ej: "June 22, 2026" → 2026-06-22)
-⚠️ La línea de cabecera con fecha + cifra en verde (ej: "June 22, 2026 $116.12") es el TOTAL DIARIO — NO es una operación, ignórala completamente.
+ESTRATEGIA para CIERRE (la de la posición ORIGINAL, no la acción):
+- Comprado Call + PyG → cerrando VCALL → estrategia=VCALL
+- Comprado Put + PyG → cerrando VPUT → estrategia=VPUT
+- Vendido Call + PyG → cerrando CCALL → estrategia=CCALL
+- Vendido Put + PyG → cerrando CPUT → estrategia=CPUT
+- Expired Put → cerrando CPUT → estrategia=CPUT
+- Expired Call → cerrando CCALL → estrategia=CCALL
+
+ESTRATEGIA para APERTURA:
+- Vendido Put → VPUT | Vendido Call → VCALL
+- Comprado Put → CPUT | Comprado Call → CCALL
+
+FECHA: puede haber varias secciones de fechas en la misma pantalla.
+Cada operación usa la fecha de la sección que la contiene, no siempre la primera.
+⚠️ Las líneas "June 22, 2026 $116.12" o "June 23, 2026 -$63.86" son TOTALES DIARIOS — ignóralas, solo usa la fecha.
 
 SÍMBOLO:
 "JUL 17 '26 85 Call" → vencimiento=2026-07-17, strike=85
@@ -652,10 +661,11 @@ SÍMBOLO:
 MONEDA: detecta el símbolo → $=USD, €=EUR, £=GBP
 
 VALORES:
-- CIERRE: beneficio=PyG verde, precio_cierre=total gris del contrato, prima=0
+- CIERRE: beneficio=PyG coloreado (verde o rojo, con su signo), precio_cierre=total gris, prima=0
 - APERTURA: prima=total gris del contrato, beneficio=0, precio_cierre=0
-- Si hay N contratos (Comprado 2): el total gris ya incluye todos
-- El pequeño en cursiva son comisiones → NO incluir
+- contratos = el número detrás de Vendido/Comprado/Expired (ej: "Comprado 2" → contratos=2)
+- El total gris ya incluye todos los contratos
+- El número pequeño en cursiva son comisiones → NO incluir
 
 Devuelve SOLO un array JSON sin texto adicional ni backticks:
 [{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","notas":""}]` }
