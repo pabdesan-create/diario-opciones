@@ -621,59 +621,51 @@ export default function App() {
             { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data } },
             { type: 'text', text: `Analiza este screenshot de la app móvil de Interactive Brokers y extrae TODAS las operaciones con opciones.
 
-ESTRUCTURA DE CADA CARD en IB mobile:
-- Línea 1: TICKER + exchange (ej: ZTS ISE, ACN NASDAQOM, AENA)
-- Línea 2: símbolo (ej: JUL 17 '26 85 Call, JUN 26 '26 23.5 Call, 19JUN26 22 P)
-- Línea 3: acción + contratos (Vendido 1, Comprado 2, Expired 1)
-- Derecha arriba: precio por acción en negrita ($1.15, €0)
-- Derecha medio gris: TOTAL del contrato ($115, $10) → es el precio_cierre o prima
-- Derecha pequeño cursiva: comisión IB ($0.25, $1.10) → IGNORAR
-- Derecha verde: PyG realizado → es el beneficio neto
+ESTRUCTURA DE CADA CARD:
+- Línea 1: TICKER + exchange
+- Línea 2: símbolo (ej: JUL 17 '26 85 Call, JUN 26 '26 127 Call)
+- Línea 3: acción + contratos (Vendido 1, Comprado 2, Assigned 1, Expired 1)
+- Derecha arriba: precio por acción en negrita
+- Derecha medio gris: TOTAL del contrato → precio_cierre o prima
+- Derecha pequeño cursiva: comisión IB → IGNORAR
+- Derecha CON COLOR (verde o rojo): PyG realizado → beneficio
 
-TIPO de operación — REGLA CRÍTICA (solo hay una forma de distinguir apertura de cierre):
-¿Hay un número con COLOR (verde $XX.XX o rojo -$XX.XX) al lado derecho de la card?
-  → SÍ hay número con color = SIEMPRE CIERRE (sin excepción)
-  → NO hay número con color = SIEMPRE APERTURA
+TABLA DE CLASIFICACIÓN — aplica fila a fila sin excepciones:
 
-Ejemplos:
-- "Comprado 1 ... $40 ... $48.9" (verde) → CIERRE ✓
-- "Comprado 1 ... $206 ... -$80.75" (rojo) → CIERRE ✓ (PyG negativo sigue siendo CIERRE)
-- "Comprado 1 ... $15 ... $16.9" (verde) → CIERRE ✓
-- "Vendido 1 ... $900" (sin color) → APERTURA ✓
-- "Vendido 1 ... $206" (sin color) → APERTURA ✓
+Acción   | P&L colorido | tipo     | Put  | Call
+---------|--------------|----------|------|------
+Vendido  | NO           | APERTURA | VPUT | VCALL
+Comprado | NO           | APERTURA | CPUT | CCALL
+Vendido  | SÍ           | CIERRE   | CPUT | CCALL
+Comprado | SÍ           | CIERRE   | VPUT | VCALL
+Assigned | cualquiera   | CIERRE   | VPUT | VCALL  (assigned=true)
+Expired  | cualquiera   | CIERRE   | CPUT | CCALL  (assigned=true)
 
-ESTRATEGIA para CIERRE (la de la posición ORIGINAL, no la acción):
-- Comprado Call + PyG → cerrando VCALL → estrategia=VCALL
-- Comprado Put + PyG → cerrando VPUT → estrategia=VPUT
-- Vendido Call + PyG → cerrando CCALL → estrategia=CCALL
-- Vendido Put + PyG → cerrando CPUT → estrategia=CPUT
-- Expired Put → cerrando CPUT → estrategia=CPUT
-- Expired Call → cerrando CCALL → estrategia=CCALL
+EJEMPLOS CONCRETOS:
+- "ACN JUN 26 127 Call / Comprado 1 / $50 / $64.5 verde" → CIERRE, estrategia=VCALL, beneficio=64.5, precio_cierre=50
+- "MA JUL 17 465 Put / Comprado 1 / $210 / $263.31 verde" → CIERRE, estrategia=VPUT, beneficio=263.31, precio_cierre=210
+- "ACN JUN 26 128 Call / Vendido 1 / $31 / sin PyG" → APERTURA, estrategia=VCALL, prima=31
+- "ACN JUN 26 128 Call / Assigned 1 / $0" → CIERRE, estrategia=VCALL, beneficio=0
+- "BLK JUL 17 910 Put / Vendido 1 / $900 / sin PyG" → APERTURA, estrategia=VPUT, prima=900
+- "CMCSA JUN 26 25 Put / Comprado 1 / $206 / -$80.75 rojo" → CIERRE, estrategia=VPUT, beneficio=-80.75, precio_cierre=206
 
-ESTRATEGIA para APERTURA:
-- Vendido Put → VPUT | Vendido Call → VCALL
-- Comprado Put → CPUT | Comprado Call → CCALL
+FECHAS: puede haber varias secciones de fechas distintas. Cada operación usa la fecha de su sección.
+⚠️ Las líneas "June 27, 2026 $64.5" son TOTALES DIARIOS — ignóralas completamente.
 
-FECHA: puede haber varias secciones de fechas en la misma pantalla.
-Cada operación usa la fecha de la sección que la contiene, no siempre la primera.
-⚠️ Las líneas "June 22, 2026 $116.12" o "June 23, 2026 -$63.86" son TOTALES DIARIOS — ignóralas, solo usa la fecha.
+SÍMBOLO: "JUL 17 '26 85 Call" → vencimiento=2026-07-17, strike=85
 
-SÍMBOLO:
-"JUL 17 '26 85 Call" → vencimiento=2026-07-17, strike=85
-"JUN 26 '26 23.5 Call" → vencimiento=2026-06-26, strike=23.5
-"19JUN26 22 P" → vencimiento=2026-06-19, strike=22
-
-MONEDA: detecta el símbolo → $=USD, €=EUR, £=GBP
+MONEDA: $=USD, €=EUR, £=GBP
+contratos = número tras Vendido/Comprado/Assigned/Expired
 
 VALORES:
-- CIERRE: beneficio=PyG coloreado (verde o rojo, con su signo), precio_cierre=total gris, prima=0
-- APERTURA: prima=total gris del contrato, beneficio=0, precio_cierre=0
-- contratos = el número detrás de Vendido/Comprado/Expired (ej: "Comprado 2" → contratos=2)
-- El total gris ya incluye todos los contratos
-- El número pequeño en cursiva son comisiones → NO incluir
+- CIERRE: beneficio=P&L colorido (con signo), precio_cierre=total gris, prima=0
+- APERTURA: prima=total gris, beneficio=0, precio_cierre=0
+- Número pequeño cursiva = comisiones → NO incluir
 
 Devuelve SOLO un array JSON sin texto adicional ni backticks:
-[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","notas":""}]` }
+[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","assigned":false,"notas":""}]
+
+assigned=true SOLO para Assigned o Expired (la app calculará el beneficio automáticamente desde la prima cobrada).` }
           ]}]
         })
       })
@@ -728,14 +720,25 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
           const op_abierta = ops.find(o => matchKey(o) && o.estado === 'ABIERTA')
           const op_yacerrada = !op_abierta && ops.find(o => matchKey(o) && o.estado === 'CERRADA')
           if (op_abierta) {
-            cierresVinculados.push({ ...op_abierta, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
+            cierresVinculados.push({
+              ...op_abierta,
+              fecha_cierre: r.fecha,
+              // Adjudicación: prima total = beneficio (opción expiró asignada, se contabiliza como prima cobrada íntegra)
+              precio_cierre: r.assigned ? 0 : r.precio_cierre,
+              beneficio: r.assigned ? op_abierta.prima : r.beneficio,
+              estado: 'CERRADA',
+              notas: r.assigned ? `Adjudicación (${r.fecha}) — prima ${op_abierta.prima}$ como beneficio` : (op_abierta.notas || '')
+            })
           } else if (op_yacerrada) {
             // Ya estaba cerrada — ignorar silenciosamente pero avisar
             cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
           } else {
             cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
               fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
-              objetivo_pct: 45, contratos: r.contratos || 1, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
+              objetivo_pct: 45, contratos: r.contratos || 1, fecha_cierre: r.fecha,
+              precio_cierre: r.assigned ? 0 : r.precio_cierre,
+              beneficio: r.assigned ? (r.prima || null) : r.beneficio,
+              notas: r.assigned ? 'Adjudicación — introduce la prima original cobrada como beneficio' : (r.notas || '') })
           }
         } else {
           aperturas.push(calcOp({ id: uid(), cuenta: cuentaTarget, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
