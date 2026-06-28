@@ -584,6 +584,12 @@ FORMATO WEB/ESCRITORIO (tabla con columnas):
 - Columna "Básico": prima original cobrada al abrir (solo aparece en cierres)
 - Columna "PyG realizadas": beneficio neto final
 
+⚠️ OPCIONES EN EUR (sección "EUR" de IB):
+- Los valores de Básico y PyG en filas individuales están en EUROS, NO en dólares
+- Cada símbolo EUR tiene su propia fila "Total en USD" debajo → usa ESE valor para prima y beneficio
+- Si el símbolo EUR solo tiene una fila de resumen "Total en USD", ese es el beneficio en $
+- NUNCA uses el valor EUR directamente como si fuera USD
+
 FORMATO MÓVIL (cards con Vendido/Comprado):
 - "Vendido" + Put/Call + SIN PyG → APERTURA posición corta (VPUT o VCALL)
 - "Comprado" + Put/Call + CON PyG → CIERRE posición corta
@@ -604,9 +610,9 @@ APERTURAS SIN PyG:
 Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks:
 [{"tipo":"APERTURA o CIERRE","estrategia":"VPUT o VCALL o CPUT o CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"notas":""}]
 
-- prima = total contrato en $ al abrir
-- precio_cierre = total contrato en $ al cerrar (0 si apertura)
-- beneficio = PyG neto en $ (0 si apertura, puede ser negativo si pérdida)` }
+- prima = total contrato en USD al abrir (para EUR: usa Total en USD)
+- precio_cierre = total contrato en USD al cerrar (0 si apertura)
+- beneficio = PyG neto en USD (0 si apertura, puede ser negativo; para EUR: usa Total en USD)` }
           ]}]
         })
       })
