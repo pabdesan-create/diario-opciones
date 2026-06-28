@@ -209,7 +209,7 @@ function buildSeed() {
 const EMPTY = {
   cuenta: 'pablo', estado: 'ABIERTA', fecha_apertura: new Date().toISOString().slice(0,10),
   estrategia: 'VPUT', ticker: '', vencimiento: '', strike: '', prima: '', objetivo_pct: 45,
-  margen: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
+  contratos: 1, margen: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
 }
 
 // ══════════════════════════════════════
@@ -280,7 +280,10 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
         style={{ display: 'grid', gridTemplateColumns: GRID,
           gap: 8, padding: '8px 12px', cursor: 'pointer', alignItems: 'center', fontSize: 12 }}>
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.fecha_apertura)}</span>
-        <Badge text={op.ticker} color={C.acc} />
+        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <Badge text={op.ticker} color={C.acc} />
+          {op.contratos > 1 && <span style={{ fontSize: 9, color: C.gold, fontWeight: 700 }}>×{op.contratos}</span>}
+        </span>
         <Badge text={op.estrategia} color={estratColor(op.estrategia)} />
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.vencimiento)}</span>
         <span style={{ color: C.txt, textAlign: 'right' }}>{op.strike ?? '—'}</span>
@@ -326,16 +329,19 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
               ['Vencimiento', fmtDate(op.vencimiento)],
               ['Fecha cierre', fmtDate(op.fecha_cierre)],
               ['Strike', op.strike ?? '—'],
-              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)}` : '—'],
-              ['Precio cierre', op.precio_cierre != null ? fmtNum(op.precio_cierre) : '—'],
-              ['Objetivo cierre', op.obj_precio != null ? fmtNum(op.obj_precio) : '—'],
-              ['Margen req.', op.margen != null ? `${fmtNum(op.margen)}` : '—'],
-              ['Exposición (×100)', op.exposicion != null ? fmtNum(op.exposicion) : '—'],
+              ['Contratos', op.contratos > 1 ? `${op.contratos} contratos` : '1 contrato'],
+              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)} $` : '—'],
+              ...(op.contratos > 1 && op.prima != null ? [['Prima / contrato', `${fmtNum(parseFloat((op.prima / op.contratos).toFixed(2)))} $`]] : []),
+              ['Precio cierre', op.precio_cierre != null ? `${fmtNum(op.precio_cierre)} $` : '—'],
+              ['Objetivo cierre', op.obj_precio != null ? `${fmtNum(op.obj_precio)} $` : '—'],
+              ['Margen req.', op.margen != null ? `${fmtNum(op.margen)} $` : '—'],
+              ['Exposición (×100)', op.exposicion != null ? `${fmtNum(op.exposicion)} $` : '—'],
               ['Beneficio neto', op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)} $` : '—'],
+              ...(op.contratos > 1 && op.beneficio != null ? [['Beneficio / contrato', `${op.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((op.beneficio / op.contratos).toFixed(2)))} $`]] : []),
               ['Rent. total', op.rent_total != null ? fmtPct(op.rent_total) : '—'],
               ['Rent. anualizada', op.rent_anual != null ? fmtPct(op.rent_anual) : '—'],
               ['Días', op.dias ?? '—'],
-              ['Adjudicación', op.adjudicacion != null ? fmtNum(op.adjudicacion) : '—'],
+              ['Adjudicación', op.adjudicacion != null ? `${fmtNum(op.adjudicacion)} $` : '—'],
             ].map(([l, v]) => (
               <div key={l} style={{ background: C.surf2, borderRadius: 6, padding: '6px 10px' }}>
                 <div style={{ fontSize: 9, color: C.dim, textTransform: 'uppercase', marginBottom: 2 }}>{l}</div>
@@ -381,6 +387,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
         <Input label="Vencimiento" value={f.vencimiento} onChange={upd('vencimiento')} type="date" />
         <Input label="Strike" value={f.strike} onChange={upd('strike')} type="number" step="0.5" />
         <Input label="Prima total contrato ($)" value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
+        <Input label="Nº contratos" value={f.contratos ?? 1} onChange={upd('contratos')} type="number" step="1" />
         <Input label="Objetivo cierre %" value={f.objetivo_pct} onChange={upd('objetivo_pct')} type="number" step="1" />
         <Input label="Margen requerido ($)" value={f.margen} onChange={upd('margen')} type="number" step="1" />
       </div>
@@ -404,8 +411,9 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
 
       {/* Preview resultados */}
       {f.estado === 'CERRADA' && calc.rent_anual != null && (
-        <div style={{ background: C.bg, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20 }}>
-          {[['Beneficio', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(calc.beneficio)} $`, calc.beneficio >= 0 ? C.grn : C.red],
+        <div style={{ background: C.bg, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+          {[['Beneficio total', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(calc.beneficio)} $`, calc.beneficio >= 0 ? C.grn : C.red],
+            ...((f.contratos > 1) ? [['Por contrato', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((calc.beneficio / f.contratos).toFixed(2)))} $`, calc.beneficio >= 0 ? C.grn : C.red]] : []),
             ['Rent. total', fmtPct(calc.rent_total), calc.rent_total >= 0 ? C.grn : C.red],
             ['Rent. anual', fmtPct(calc.rent_anual), calc.rent_anual >= 0 ? C.grn : C.red],
             ['Días', `${calc.dias}d`, C.dim]].map(([l, v, col]) => (
@@ -418,6 +426,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
         <button onClick={() => onSave(calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null,
+          contratos: +f.contratos || 1,
           objetivo_pct: +f.objetivo_pct || 45, margen: +f.margen || null,
           precio_cierre: +f.precio_cierre || null,
           beneficio: f.beneficio !== '' && f.beneficio != null ? +f.beneficio : null,
@@ -617,11 +626,11 @@ ESTRUCTURA DE CADA CARD en IB mobile:
 - Derecha verde: PyG realizado → es el beneficio neto
 
 TIPO de operación:
-- Vendido + SIN PyG verde → APERTURA corta (VPUT o VCALL)
-- Comprado + CON PyG verde → CIERRE corta (compraste para cerrar)
-- Comprado + SIN PyG verde → APERTURA larga (CPUT o CCALL)
-- Vendido + CON PyG verde → CIERRE larga
-- "Expired" o etiquetas C/Ep → CIERRE por expiración
+- Vendido N + SIN PyG verde → APERTURA corta (VPUT o VCALL), contratos=N
+- Comprado N + CON PyG verde → CIERRE corta, contratos=N
+- Comprado N + SIN PyG verde → APERTURA larga (CPUT o CCALL), contratos=N
+- Vendido N + CON PyG verde → CIERRE larga, contratos=N
+- "Expired N" o etiquetas C/Ep → CIERRE por expiración, contratos=N
 
 ESTRATEGIA (crítico — la estrategia es siempre la de la POSICIÓN ORIGINAL):
 - APERTURA Vendido Put → VPUT | APERTURA Vendido Call → VCALL
@@ -649,7 +658,7 @@ VALORES:
 - El pequeño en cursiva son comisiones → NO incluir
 
 Devuelve SOLO un array JSON sin texto adicional ni backticks:
-[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","notas":""}]` }
+[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","notas":""}]` }
           ]}]
         })
       })
@@ -711,12 +720,12 @@ Devuelve SOLO un array JSON sin texto adicional ni backticks:
           } else {
             cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
               fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
-              objetivo_pct: 45, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
+              objetivo_pct: 45, contratos: r.contratos || 1, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
           }
         } else {
           aperturas.push(calcOp({ id: uid(), cuenta: cuentaTarget, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
             fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima,
-            objetivo_pct: 45, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
+            objetivo_pct: 45, contratos: r.contratos || 1, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
         }
       })
       const convMsg = convertidas > 0 ? ` (${convertidas} op${convertidas > 1 ? 's' : ''} convertida${convertidas > 1 ? 's' : ''} de ${resultados.find(r => r.moneda && r.moneda !== 'USD')?.moneda || '?'} a USD)` : ''
