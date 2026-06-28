@@ -28,23 +28,14 @@ function calcOp(op) {
   // obj_precio = total a pagar al cerrar para conseguir el objetivo de beneficio
   const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * (1 - op.objetivo_pct / 100)).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
-  let precio_cierre = op.precio_cierre != null ? op.precio_cierre : null
-
-  if (op.estado === 'CERRADA' && op.prima != null) {
-    // Derivar beneficio desde precio_cierre si falta
-    if (beneficio == null && precio_cierre != null) {
-      beneficio = parseFloat((op.prima - precio_cierre).toFixed(2))
-    }
-    // Derivar precio_cierre desde beneficio si falta (o recalcular siempre para sanear datos viejos)
-    if (beneficio != null) {
-      precio_cierre = parseFloat((op.prima - beneficio).toFixed(2))
-    }
+  if (op.estado === 'CERRADA' && op.precio_cierre != null && op.prima != null && beneficio == null) {
+    // beneficio = prima_total - coste_cierre_total (ambos en dólares totales)
+    beneficio = parseFloat((op.prima - op.precio_cierre).toFixed(2))
   }
-
   const d = dias(op.fecha_apertura, op.fecha_cierre)
   const rent_total = beneficio != null && exposicion ? parseFloat((beneficio / exposicion * 100).toFixed(4)) : null
   const rent_anual = rent_total != null && d > 0 ? parseFloat((rent_total * 365 / d).toFixed(2)) : null
-  return { ...op, exposicion, obj_precio, beneficio, precio_cierre, dias: d, rent_total, rent_anual }
+  return { ...op, exposicion, obj_precio, beneficio, dias: d, rent_total, rent_anual }
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -123,15 +114,6 @@ function buildSeed() {
     { mes:'Junio', estado:'CERRADA', fecha:46178, estrategia:'VPUT', ticker:'TSM', venc:46220, strike:380, prima:954, obj_pct:45, cierre:46188, benef:402.13, precio100:38000, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'PYPL', venc:46191, strike:43.5, prima:24, obj_pct:45, cierre:46190, benef:10.9, precio100:4350, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'NU', venc:46199, strike:12, prima:39, obj_pct:45, cierre:46190, benef:-93.1, precio100:1200, dias:null },
-    // Operaciones Junio Pablo faltantes del seed original (detectadas vs Excel)
-    { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'AWK', venc:46191, strike:120, prima:152, obj_pct:45, cierre:46178, benef:82.94, precio100:12000 },
-    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASTS', venc:46191, strike:null, prima:null, obj_pct:45, cierre:46189, benef:110.73, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46170, estrategia:'VPUT', ticker:'OMC', venc:46191, strike:70, prima:104, obj_pct:45, cierre:46181, benef:62.00, precio100:7000 },
-    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASML', venc:46220, strike:null, prima:null, obj_pct:45, cierre:46189, benef:598.32, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASML', venc:46164, strike:null, prima:3899, obj_pct:45, cierre:46174, benef:1098.37, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASTS', venc:46164, strike:null, prima:928, obj_pct:45, cierre:46174, benef:-0.28, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46171, estrategia:'VPUT', ticker:'RMD', venc:46191, strike:185, prima:185, obj_pct:45, cierre:46182, benef:92.90, precio100:18500 },
-    { mes:'Junio', estado:'CERRADA', fecha:46174, estrategia:'VPUT', ticker:'V', venc:46191, strike:295, prima:65, obj_pct:45, cierre:46178, benef:32.12, precio100:29500 },
     // Abiertas
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'VPUT', ticker:'NOW', venc:46220, strike:90, prima:145, obj_pct:45, precio100:9000 },
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'CCALL', ticker:'META', venc:46374, strike:580, prima:8520, obj_pct:45, precio100:58000 },
@@ -330,8 +312,8 @@ function OpRow({ op, onEdit, onDelete, onClose }) {
               ['Vencimiento', fmtDate(op.vencimiento)],
               ['Fecha cierre', fmtDate(op.fecha_cierre)],
               ['Strike', op.strike ?? '—'],
-              ['Prima cobrada (total $)', op.prima != null ? `${fmtNum(op.prima)}` : '—'],
-              ['Precio cierre (total $)', op.precio_cierre != null ? fmtNum(op.precio_cierre) : '—'],
+              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)}` : '—'],
+              ['Precio cierre', op.precio_cierre != null ? fmtNum(op.precio_cierre) : '—'],
               ['Objetivo cierre', op.obj_precio != null ? fmtNum(op.obj_precio) : '—'],
               ['Margen req.', op.margen != null ? `${fmtNum(op.margen)}` : '—'],
               ['Exposición (×100)', op.exposicion != null ? fmtNum(op.exposicion) : '—'],
@@ -447,7 +429,7 @@ function ResultsTab({ ops, cuenta }) {
     const k = mesKey(fechaRef)
     if (!k) return
     if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(fechaRef) }
-    byMes[k].total = Math.round((byMes[k].total + op.beneficio) * 100) / 100
+    byMes[k].total += op.beneficio
     byMes[k].count += 1
   })
   const meses = Object.entries(byMes).sort(([a], [b]) => a.localeCompare(b))
@@ -525,28 +507,16 @@ export default function App() {
   const [showCfg, setShowCfg] = useState(false)
   const fileRef = useRef()
 
-  // Cargar datos + migrar/fusionar con seed actualizado
+  // Cargar datos
   useEffect(() => {
-    const seed = buildSeed()
     const saved = LS.get('diario-ops-v1')
-
-    if (!saved || saved.length === 0) {
+    if (saved && saved.length > 0) {
+      setOps(saved)
+    } else {
+      const seed = buildSeed()
       setOps(seed)
       LS.set('diario-ops-v1', seed)
-      return
     }
-
-    // Fingerprint para identificar ops únicas sin depender del id aleatorio
-    const fp = op => `${op.cuenta}|${op.estrategia}|${op.ticker}|${op.fecha_apertura}|${op.vencimiento}|${op.strike}`
-    const savedSet = new Set(saved.map(fp))
-
-    // Ops del seed que NO están en localStorage (seed fue ampliado después del primer uso)
-    const missing = seed.filter(op => !savedSet.has(fp(op)))
-
-    // Merge: ops guardadas + faltantes, todo recalculado (sanea precio_cierre, rent, etc.)
-    const merged = [...saved, ...missing].map(op => calcOp({ ...op }))
-    setOps(merged)
-    LS.set('diario-ops-v1', merged)
   }, [])
 
   const persist = arr => { setOps(arr); LS.set('diario-ops-v1', arr) }
@@ -558,7 +528,7 @@ export default function App() {
     else if (tab === 'maria' || tab === 'res-maria') { if (o.cuenta !== 'maria') return false }
     else return true
     if (filtro !== 'TODAS' && o.estado !== filtro) return false
-    if (mesFiltro !== 'TODOS' && o.estado === 'CERRADA' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
+    if (mesFiltro !== 'TODOS' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
     return true
   }).sort((a, b) => {
@@ -591,7 +561,7 @@ export default function App() {
           model: 'claude-sonnet-4-6', max_tokens: 1000, temperature: 0,
           messages: [{ role: 'user', content: [
             { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data } },
-            { type: 'text', text: `Analiza este extracto de Interactive Brokers y extrae los datos de la operación con opciones.
+            { type: 'text', text: `Analiza este extracto de Interactive Brokers y extrae TODAS las operaciones con opciones que aparezcan.
 
 FORMATO WEB/ESCRITORIO (tabla con columnas):
 - Columna "Código": C = CIERRE, O = APERTURA
@@ -602,64 +572,86 @@ FORMATO WEB/ESCRITORIO (tabla con columnas):
 
 FORMATO MÓVIL (cards con Vendido/Comprado):
 - "Vendido" + Put/Call + SIN PyG → APERTURA posición corta (VPUT o VCALL)
-- "Comprado" + Put/Call + CON PyG → CIERRE posición corta (VPUT o VCALL)
+- "Comprado" + Put/Call + CON PyG → CIERRE posición corta
 - "Comprado" + Put/Call + SIN PyG → APERTURA posición larga (CPUT o CCALL)
 - "Vendido" + Put/Call + CON PyG → CIERRE posición larga
-- Precio mostrado como "$X.XX" = por acción, "$XXX" debajo = total contrato
+- Precio "$X.XX" = por acción, "$XXX" debajo = total contrato
 
-PARSEAR SÍMBOLO (ambos formatos):
-"MA JUL 17 '26 465 Put" → ticker=MA, vencimiento=2026-07-17, strike=465, Put
-"ACN JUN 26 '26 127 Call" → ticker=ACN, vencimiento=2026-06-26, strike=127, Call
-"BLK 17JUL26 910 P" → ticker=BLK, vencimiento=2026-07-17, strike=910, Put
+PARSEAR SÍMBOLO:
+"MA JUL 17 '26 465 Put" → ticker=MA, vencimiento=2026-07-17, strike=465
+"BLK 17JUL26 910 P" → ticker=BLK, vencimiento=2026-07-17, strike=910
+Estrategia: apertura Put vendida=VPUT, Call vendida=VCALL, Put comprada=CPUT, Call comprada=CCALL
 
-ESTRATEGIA:
-- Apertura Put vendida = VPUT | Apertura Call vendida = VCALL
-- Apertura Put comprada = CPUT | Apertura Call comprada = CCALL
-- Cierre de VPUT → estrategia=VPUT (misma que la apertura original)
+APERTURAS SIN PyG:
+- Las aperturas NO tienen PyG, eso es completamente normal
+- "Vendido" sin PyG = apertura válida → tipo=APERTURA, estado=ABIERTA, beneficio=0
+- NO ignorar operaciones por no tener PyG
 
-Si hay MÚLTIPLES operaciones en la imagen, extrae SOLO la que tenga PyG más destacada (en verde grande) o la primera de la lista.
+Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks:
+[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT o VCALL o CPUT o CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"notas":""}]
 
-Devuelve SOLO JSON válido sin backticks ni texto adicional:
-{"tipo":"APERTURA o CIERRE","estrategia":"VPUT o VCALL o CPUT o CCALL o COMBO","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"notas":""}
-
-- prima = total contrato en $ al abrir (ej: 473.94 o 900)
-- precio_cierre = total contrato en $ al cerrar (ej: 210)
-- beneficio = PyG neto en $ (puede ser negativo)` }
+- prima = total contrato en $ al abrir
+- precio_cierre = total contrato en $ al cerrar (0 si apertura)
+- beneficio = PyG neto en $ (0 si apertura, puede ser negativo si pérdida)` }
           ]}]
         })
       })
       const d = await resp.json()
       if (d.error) throw new Error(d.error.message)
       const raw = d.content?.[0]?.text || ''
-      const match = raw.match(/\{[\s\S]*\}/)
-      if (!match) throw new Error('No se encontró JSON')
-      const r = JSON.parse(match[0])
+      // Intentar parsear como array primero, luego como objeto único
+      const matchArr = raw.match(/\[[\s\S]*\]/)
+      const matchObj = raw.match(/\{[\s\S]*\}/)
+      if (!matchArr && !matchObj) throw new Error('No se encontró JSON en la respuesta')
+      const parsed = matchArr ? JSON.parse(matchArr[0]) : [JSON.parse(matchObj[0])]
+      const resultados = Array.isArray(parsed) ? parsed : [parsed]
 
-      if (r.tipo === 'CIERRE' && r.ticker && r.strike && r.vencimiento) {
-        // Buscar operación abierta coincidente
-        const match_op = ops.find(o =>
-          o.cuenta === cuenta &&
-          o.estado === 'ABIERTA' &&
-          o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
-          o.strike === r.strike &&
-          o.vencimiento === r.vencimiento
-        )
-        if (match_op) {
-          setAnalyzeMsg(`✅ Cierre detectado para ${r.ticker} ${r.strike} — vinculado a operación abierta`)
-          setCloseOp({ ...match_op, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
+      // Procesar cada operación extraída
+      const aperturas = [], cierresVinculados = [], cierresSinVincular = []
+      resultados.forEach(r => {
+        if (!r.ticker) return
+        if (r.tipo === 'CIERRE' && r.ticker && r.strike && r.vencimiento) {
+          const op_abierta = ops.find(o =>
+            o.cuenta === cuenta && o.estado === 'ABIERTA' &&
+            o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
+            o.strike === r.strike && o.vencimiento === r.vencimiento
+          )
+          if (op_abierta) {
+            cierresVinculados.push({ ...op_abierta, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
+          } else {
+            cierresSinVincular.push({ id: uid(), cuenta, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
+              fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
+              objetivo_pct: 45, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
+          }
         } else {
-          setAnalyzeMsg(`⚠️ Cierre de ${r.ticker} ${r.strike} — no se encontró operación abierta vinculada`)
-          setEditOp({ id: uid(), cuenta, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
-            fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: 0,
-            objetivo_pct: 45, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
-          setShowForm(true)
+          aperturas.push(calcOp({ id: uid(), cuenta, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
+            fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima,
+            objetivo_pct: 45, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
         }
-      } else {
-        setAnalyzeMsg(`✅ Apertura detectada: ${r.estrategia} ${r.ticker} ${r.strike} — revisa y guarda`)
-        setEditOp({ id: uid(), cuenta, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
-          fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima,
-          objetivo_pct: 45, precio_cierre: '', fecha_cierre: '', beneficio: '', notas: r.notas })
+      })
+
+      // Guardar aperturas directamente
+      if (aperturas.length > 0) {
+        persist([...ops, ...aperturas])
+        setAnalyzeMsg(`✅ ${aperturas.length} apertura(s) registrada(s): ${aperturas.map(a => a.ticker).join(', ')}`)
+      }
+      // Aplicar cierres vinculados directamente
+      if (cierresVinculados.length > 0) {
+        const updated = ops.map(o => {
+          const c = cierresVinculados.find(c => c.id === o.id)
+          return c ? calcOp(c) : o
+        })
+        persist(updated)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `✅ ${cierresVinculados.length} cierre(s) vinculado(s): ${cierresVinculados.map(c => c.ticker).join(', ')}`)
+      }
+      // Cierres sin vincular → abrir formulario para el primero
+      if (cierresSinVincular.length > 0) {
+        setEditOp(cierresSinVincular[0])
         setShowForm(true)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `⚠️ ${cierresSinVincular.length} cierre(s) sin posición abierta: ${cierresSinVincular.map(c => c.ticker).join(', ')}`)
+      }
+      if (aperturas.length === 0 && cierresVinculados.length === 0 && cierresSinVincular.length === 0) {
+        setAnalyzeMsg('⚠️ No se encontraron operaciones en la imagen')
       }
     } catch (e) { setAnalyzeMsg('❌ ' + e.message) }
     finally { setAnalyzing(false) }
@@ -771,7 +763,7 @@ Devuelve SOLO JSON válido sin backticks ni texto adicional:
                 </button>
               ))}
 
-              {/* Filtro por mes (visible en modo CERRADA o TODAS) */}
+              {/* Filtro por mes (solo visible cuando hay cerradas) */}
               {(filtro === 'CERRADA' || filtro === 'TODAS') && mesesDisponibles.length > 0 && (
                 <select value={mesFiltro} onChange={e => setMesFiltro(e.target.value)}
                   style={{ background: C.surf2, border: `1px solid ${mesFiltro !== 'TODOS' ? C.gold : C.brd}`, color: mesFiltro !== 'TODOS' ? C.gold : C.dim, borderRadius: 20, padding: '5px 12px', fontSize: 11, outline: 'none', cursor: 'pointer' }}>
