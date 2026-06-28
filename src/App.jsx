@@ -24,18 +24,19 @@ const dias = (a, b) => a && b ? Math.round((new Date(b) - new Date(a)) / 8640000
 
 function calcOp(op) {
   const exposicion = (op.strike || 0) * 100
-  // prima y precio_cierre son el TOTAL del contrato (no por acción)
-  // obj_precio = total a pagar al cerrar para conseguir el objetivo de beneficio
   const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * (1 - op.objetivo_pct / 100)).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
-  if (op.estado === 'CERRADA' && op.precio_cierre != null && op.prima != null && beneficio == null) {
-    // beneficio = prima_total - coste_cierre_total (ambos en dólares totales)
-    beneficio = parseFloat((op.prima - op.precio_cierre).toFixed(2))
+  let precio_cierre = op.precio_cierre != null ? op.precio_cierre : null
+  if (op.estado === 'CERRADA' && op.prima != null) {
+    if (beneficio == null && precio_cierre != null)
+      beneficio = parseFloat((op.prima - precio_cierre).toFixed(2))
+    if (beneficio != null)
+      precio_cierre = parseFloat((op.prima - beneficio).toFixed(2))
   }
   const d = dias(op.fecha_apertura, op.fecha_cierre)
   const rent_total = beneficio != null && exposicion ? parseFloat((beneficio / exposicion * 100).toFixed(4)) : null
   const rent_anual = rent_total != null && d > 0 ? parseFloat((rent_total * 365 / d).toFixed(2)) : null
-  return { ...op, exposicion, obj_precio, beneficio, dias: d, rent_total, rent_anual }
+  return { ...op, exposicion, obj_precio, beneficio, precio_cierre, dias: d, rent_total, rent_anual }
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -114,6 +115,15 @@ function buildSeed() {
     { mes:'Junio', estado:'CERRADA', fecha:46178, estrategia:'VPUT', ticker:'TSM', venc:46220, strike:380, prima:954, obj_pct:45, cierre:46188, benef:402.13, precio100:38000, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'PYPL', venc:46191, strike:43.5, prima:24, obj_pct:45, cierre:46190, benef:10.9, precio100:4350, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'NU', venc:46199, strike:12, prima:39, obj_pct:45, cierre:46190, benef:-93.1, precio100:1200, dias:null },
+    // Operaciones Junio faltantes (reconciliadas vs Excel)
+    { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'AWK', venc:46191, strike:120, prima:152, obj_pct:45, cierre:46178, benef:82.94, precio100:12000 },
+    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASTS', venc:46191, strike:null, prima:null, obj_pct:45, cierre:46189, benef:110.73, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46170, estrategia:'VPUT', ticker:'OMC', venc:46191, strike:70, prima:104, obj_pct:45, cierre:46181, benef:62.00, precio100:7000 },
+    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASML', venc:46220, strike:null, prima:null, obj_pct:45, cierre:46189, benef:598.32, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASML', venc:46164, strike:null, prima:3899, obj_pct:45, cierre:46174, benef:1098.37, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASTS', venc:46164, strike:null, prima:928, obj_pct:45, cierre:46174, benef:-0.28, precio100:0 },
+    { mes:'Junio', estado:'CERRADA', fecha:46171, estrategia:'VPUT', ticker:'RMD', venc:46191, strike:185, prima:185, obj_pct:45, cierre:46182, benef:92.90, precio100:18500 },
+    { mes:'Junio', estado:'CERRADA', fecha:46174, estrategia:'VPUT', ticker:'V', venc:46191, strike:295, prima:65, obj_pct:45, cierre:46178, benef:32.12, precio100:29500 },
     // Abiertas
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'VPUT', ticker:'NOW', venc:46220, strike:90, prima:145, obj_pct:45, precio100:9000 },
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'CCALL', ticker:'META', venc:46374, strike:580, prima:8520, obj_pct:45, precio100:58000 },
@@ -429,7 +439,7 @@ function ResultsTab({ ops, cuenta }) {
     const k = mesKey(fechaRef)
     if (!k) return
     if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(fechaRef) }
-    byMes[k].total += op.beneficio
+    byMes[k].total = Math.round((byMes[k].total + op.beneficio) * 100) / 100
     byMes[k].count += 1
   })
   const meses = Object.entries(byMes).sort(([a], [b]) => a.localeCompare(b))
@@ -509,14 +519,18 @@ export default function App() {
 
   // Cargar datos
   useEffect(() => {
+    const seed = buildSeed()
     const saved = LS.get('diario-ops-v1')
-    if (saved && saved.length > 0) {
-      setOps(saved)
-    } else {
-      const seed = buildSeed()
-      setOps(seed)
-      LS.set('diario-ops-v1', seed)
+    if (!saved || saved.length === 0) {
+      setOps(seed); LS.set('diario-ops-v1', seed); return
     }
+    // Merge: añadir ops del seed que falten en localStorage (seed ampliado tras primer uso)
+    const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+    const savedSet = new Set(saved.map(fp))
+    const missing = seed.filter(o => !savedSet.has(fp(o)))
+    // Recalcular campos derivados (sana precio_cierre viejos) + añadir faltantes
+    const merged = [...saved, ...missing].map(o => calcOp({ ...o }))
+    setOps(merged); LS.set('diario-ops-v1', merged)
   }, [])
 
   const persist = arr => { setOps(arr); LS.set('diario-ops-v1', arr) }
@@ -528,7 +542,7 @@ export default function App() {
     else if (tab === 'maria' || tab === 'res-maria') { if (o.cuenta !== 'maria') return false }
     else return true
     if (filtro !== 'TODAS' && o.estado !== filtro) return false
-    if (mesFiltro !== 'TODOS' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
+    if (mesFiltro !== 'TODOS' && o.estado === 'CERRADA' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
     return true
   }).sort((a, b) => {
@@ -599,12 +613,28 @@ Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks
       const d = await resp.json()
       if (d.error) throw new Error(d.error.message)
       const raw = d.content?.[0]?.text || ''
-      // Intentar parsear como array primero, luego como objeto único
-      const matchArr = raw.match(/\[[\s\S]*\]/)
-      const matchObj = raw.match(/\{[\s\S]*\}/)
-      if (!matchArr && !matchObj) throw new Error('No se encontró JSON en la respuesta')
-      const parsed = matchArr ? JSON.parse(matchArr[0]) : [JSON.parse(matchObj[0])]
-      const resultados = Array.isArray(parsed) ? parsed : [parsed]
+      // Parser robusto: elimina markdown, encuentra el JSON válido por conteo de llaves
+      const cleaned = raw.replace(/```(?:json)?\n?/g, '').trim()
+      function extractJSON(text) {
+        try { return JSON.parse(text) } catch {}
+        for (const startChar of ['[', '{']) {
+          const start = text.indexOf(startChar)
+          if (start === -1) continue
+          let depth = 0, inStr = false, esc = false
+          for (let i = start; i < text.length; i++) {
+            const ch = text[i]
+            if (esc) { esc = false; continue }
+            if (ch === '\\' && inStr) { esc = true; continue }
+            if (ch === '"') { inStr = !inStr; continue }
+            if (inStr) continue
+            if (ch === '[' || ch === '{') depth++
+            if (ch === ']' || ch === '}') { depth--; if (depth === 0) { try { const r = JSON.parse(text.slice(start, i + 1)); return r } catch {} } }
+          }
+        }
+        throw new Error('No se encontró JSON válido en la respuesta')
+      }
+      const extracted = extractJSON(cleaned)
+      const resultados = Array.isArray(extracted) ? extracted : [extracted]
 
       // Procesar cada operación extraída
       const aperturas = [], cierresVinculados = [], cierresSinVincular = []
