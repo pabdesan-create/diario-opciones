@@ -515,6 +515,11 @@ export default function App() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeMsg, setAnalyzeMsg] = useState('')
   const [showCfg, setShowCfg] = useState(false)
+  const [sortCol, setSortCol] = useState('fecha_apertura')
+  const [sortDir, setSortDir] = useState('desc')
+  const [ibCuenta, setIbCuenta] = useState('pablo')
+  const [eurUsd, setEurUsd] = useState(() => parseFloat(LS.get('eur-usd') || '1.09'))
+  const [gbpUsd, setGbpUsd] = useState(() => parseFloat(LS.get('gbp-usd') || '1.27'))
   const fileRef = useRef()
 
   // Cargar datos
@@ -546,9 +551,18 @@ export default function App() {
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
     return true
   }).sort((a, b) => {
-    if (a.estado === 'ABIERTA' && b.estado !== 'ABIERTA') return -1
-    if (b.estado === 'ABIERTA' && a.estado !== 'ABIERTA') return 1
-    return (b.fecha_apertura || '').localeCompare(a.fecha_apertura || '')
+    // Abiertas siempre primero (a menos que se ordene por un campo numérico)
+    const numCols = ['beneficio', 'rent_anual', 'prima', 'strike']
+    if (!numCols.includes(sortCol)) {
+      if (a.estado === 'ABIERTA' && b.estado !== 'ABIERTA') return -1
+      if (b.estado === 'ABIERTA' && a.estado !== 'ABIERTA') return 1
+    }
+    const aVal = a[sortCol], bVal = b[sortCol]
+    if (aVal == null && bVal == null) return 0
+    if (aVal == null) return 1
+    if (bVal == null) return -1
+    const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal) : aVal - bVal
+    return sortDir === 'asc' ? cmp : -cmp
   })
 
   const saveOp = op => {
@@ -562,8 +576,9 @@ export default function App() {
   const delOp = id => { if (confirm('¿Eliminar operación?')) persist(ops.filter(o => o.id !== id)) }
 
   // Analizar screenshot de IB
-  const analyzeIB = async file => {
+  const analyzeIB = async (file, cuentaParam) => {
     const key = apiKey || LS.get('ib-api-key')
+    const cuentaTarget = cuentaParam || cuenta
     if (!key) { setAnalyzeMsg('❌ Añade la API key en ⚙️'); return }
     setAnalyzing(true); setAnalyzeMsg('Analizando screenshot...')
     try {
@@ -575,44 +590,46 @@ export default function App() {
           model: 'claude-sonnet-4-6', max_tokens: 1000, temperature: 0,
           messages: [{ role: 'user', content: [
             { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data } },
-            { type: 'text', text: `Analiza este extracto de Interactive Brokers y extrae TODAS las operaciones con opciones que aparezcan.
+            { type: 'text', text: `Analiza este screenshot de la app móvil de Interactive Brokers y extrae TODAS las operaciones con opciones.
 
-FORMATO WEB/ESCRITORIO (tabla con columnas):
-- Columna "Código": C = CIERRE, O = APERTURA
-- Columna "Símbolo": "TICKER DDMMMYY STRIKE P/C"
-- Columna "Productos": cash flow (negativo = pagaste para cerrar, positivo = cobraste al abrir)
-- Columna "Básico": prima original cobrada al abrir (solo aparece en cierres)
-- Columna "PyG realizadas": beneficio neto final
+ESTRUCTURA DE CADA CARD en IB mobile:
+- Línea 1: TICKER + exchange (ej: ZTS ISE, ACN NASDAQOM, AENA)
+- Línea 2: símbolo (ej: JUL 17 '26 85 Call, JUN 26 '26 23.5 Call, 19JUN26 22 P)
+- Línea 3: acción + contratos (Vendido 1, Comprado 2, Expired 1)
+- Derecha arriba: precio por acción en negrita ($1.15, €0)
+- Derecha medio gris: TOTAL del contrato ($115, $10) → es el precio_cierre o prima
+- Derecha pequeño cursiva: comisión IB ($0.25, $1.10) → IGNORAR
+- Derecha verde: PyG realizado → es el beneficio neto
 
-⚠️ OPCIONES EN EUR (sección "EUR" de IB):
-- Los valores de Básico y PyG en filas individuales están en EUROS, NO en dólares
-- Cada símbolo EUR tiene su propia fila "Total en USD" debajo → usa ESE valor para prima y beneficio
-- Si el símbolo EUR solo tiene una fila de resumen "Total en USD", ese es el beneficio en $
-- NUNCA uses el valor EUR directamente como si fuera USD
+TIPO de operación:
+- Vendido + SIN PyG verde → APERTURA corta (VPUT o VCALL)
+- Comprado + CON PyG verde → CIERRE corta (compraste para cerrar)
+- Comprado + SIN PyG verde → APERTURA larga (CPUT o CCALL)
+- Vendido + CON PyG verde → CIERRE larga
+- "Expired" o etiquetas C/Ep → CIERRE por expiración
 
-FORMATO MÓVIL (cards con Vendido/Comprado):
-- "Vendido" + Put/Call + SIN PyG → APERTURA posición corta (VPUT o VCALL)
-- "Comprado" + Put/Call + CON PyG → CIERRE posición corta
-- "Comprado" + Put/Call + SIN PyG → APERTURA posición larga (CPUT o CCALL)
-- "Vendido" + Put/Call + CON PyG → CIERRE posición larga
-- Precio "$X.XX" = por acción, "$XXX" debajo = total contrato
+ESTRATEGIA:
+Vendido Put→VPUT, Vendido Call→VCALL, Comprado Put→CPUT, Comprado Call→CCALL
+Expired Put→CPUT, Expired Call→CCALL
 
-PARSEAR SÍMBOLO:
-"MA JUL 17 '26 465 Put" → ticker=MA, vencimiento=2026-07-17, strike=465
-"BLK 17JUL26 910 P" → ticker=BLK, vencimiento=2026-07-17, strike=910
-Estrategia: apertura Put vendida=VPUT, Call vendida=VCALL, Put comprada=CPUT, Call comprada=CCALL
+FECHA: usa la fecha del encabezado de la página (ej: "June 22, 2026" → 2026-06-22)
+⚠️ La línea de cabecera con fecha + cifra en verde (ej: "June 22, 2026 $116.12") es el TOTAL DIARIO — NO es una operación, ignórala completamente.
 
-APERTURAS SIN PyG:
-- Las aperturas NO tienen PyG, eso es completamente normal
-- "Vendido" sin PyG = apertura válida → tipo=APERTURA, estado=ABIERTA, beneficio=0
-- NO ignorar operaciones por no tener PyG
+SÍMBOLO:
+"JUL 17 '26 85 Call" → vencimiento=2026-07-17, strike=85
+"JUN 26 '26 23.5 Call" → vencimiento=2026-06-26, strike=23.5
+"19JUN26 22 P" → vencimiento=2026-06-19, strike=22
 
-Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks:
-[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT o VCALL o CPUT o CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"notas":""}]
+MONEDA: detecta el símbolo → $=USD, €=EUR, £=GBP
 
-- prima = total contrato en USD al abrir (para EUR: usa Total en USD)
-- precio_cierre = total contrato en USD al cerrar (0 si apertura)
-- beneficio = PyG neto en USD (0 si apertura, puede ser negativo; para EUR: usa Total en USD)` }
+VALORES:
+- CIERRE: beneficio=PyG verde, precio_cierre=total gris del contrato, prima=0
+- APERTURA: prima=total gris del contrato, beneficio=0, precio_cierre=0
+- Si hay N contratos (Comprado 2): el total gris ya incluye todos
+- El pequeño en cursiva son comisiones → NO incluir
+
+Devuelve SOLO un array JSON sin texto adicional ni backticks:
+[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","notas":""}]` }
           ]}]
         })
       })
@@ -642,34 +659,47 @@ Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks
       const extracted = extractJSON(cleaned)
       const resultados = Array.isArray(extracted) ? extracted : [extracted]
 
+      // Conversión de moneda: EUR y GBP → USD
+      const rates = { USD: 1, EUR: eurUsd, GBP: gbpUsd }
+      let convertidas = 0
+      resultados.forEach(r => {
+        const rate = rates[r.moneda] || 1
+        if (r.moneda && r.moneda !== 'USD' && rate !== 1) {
+          const conv = v => v ? Math.round(v * rate * 100) / 100 : v
+          r.prima = conv(r.prima); r.precio_cierre = conv(r.precio_cierre); r.beneficio = conv(r.beneficio)
+          convertidas++
+        }
+      })
+
       // Procesar cada operación extraída
       const aperturas = [], cierresVinculados = [], cierresSinVincular = []
       resultados.forEach(r => {
         if (!r.ticker) return
         if (r.tipo === 'CIERRE' && r.ticker && r.strike && r.vencimiento) {
           const op_abierta = ops.find(o =>
-            o.cuenta === cuenta && o.estado === 'ABIERTA' &&
+            o.cuenta === cuentaTarget && o.estado === 'ABIERTA' &&
             o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
             o.strike === r.strike && o.vencimiento === r.vencimiento
           )
           if (op_abierta) {
             cierresVinculados.push({ ...op_abierta, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
           } else {
-            cierresSinVincular.push({ id: uid(), cuenta, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
+            cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
               fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
               objetivo_pct: 45, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
           }
         } else {
-          aperturas.push(calcOp({ id: uid(), cuenta, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
+          aperturas.push(calcOp({ id: uid(), cuenta: cuentaTarget, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
             fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima,
             objetivo_pct: 45, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
         }
       })
+      const convMsg = convertidas > 0 ? ` (${convertidas} op${convertidas > 1 ? 's' : ''} convertida${convertidas > 1 ? 's' : ''} de ${resultados.find(r => r.moneda && r.moneda !== 'USD')?.moneda || '?'} a USD)` : ''
 
       // Guardar aperturas directamente
       if (aperturas.length > 0) {
         persist([...ops, ...aperturas])
-        setAnalyzeMsg(`✅ ${aperturas.length} apertura(s) registrada(s): ${aperturas.map(a => a.ticker).join(', ')}`)
+        setAnalyzeMsg(`✅ ${aperturas.length} apertura(s) [${cuentaTarget}]: ${aperturas.map(a => a.ticker).join(', ')}${convMsg}`)
       }
       // Aplicar cierres vinculados directamente
       if (cierresVinculados.length > 0) {
@@ -678,13 +708,13 @@ Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks
           return c ? calcOp(c) : o
         })
         persist(updated)
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `✅ ${cierresVinculados.length} cierre(s) vinculado(s): ${cierresVinculados.map(c => c.ticker).join(', ')}`)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `✅ ${cierresVinculados.length} cierre(s) [${cuentaTarget}]: ${cierresVinculados.map(c => c.ticker).join(', ')}${convMsg}`)
       }
       // Cierres sin vincular → abrir formulario para el primero
       if (cierresSinVincular.length > 0) {
         setEditOp(cierresSinVincular[0])
         setShowForm(true)
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `⚠️ ${cierresSinVincular.length} cierre(s) sin posición abierta: ${cierresSinVincular.map(c => c.ticker).join(', ')}`)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `⚠️ ${cierresSinVincular.length} cierre(s) sin posición abierta [${cuentaTarget}]: ${cierresSinVincular.map(c => c.ticker).join(', ')}${convMsg}`)
       }
       if (aperturas.length === 0 && cierresVinculados.length === 0 && cierresSinVincular.length === 0) {
         setAnalyzeMsg('⚠️ No se encontraron operaciones en la imagen')
@@ -738,18 +768,27 @@ Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks
 
       {/* CONFIG */}
       {showCfg && (
-        <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '12px 20px', display: 'flex', gap: 12, alignItems: 'flex-end' }}>
-          <div style={{ flex: 1, maxWidth: 420 }}>
+        <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '12px 20px', display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 300, maxWidth: 420 }}>
             <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>🔑 Anthropic API Key</label>
             <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
               placeholder="sk-ant-api03-..."
               style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
           </div>
-          <button onClick={() => { LS.set('ib-api-key', apiKey); setShowCfg(false) }}
+          <div>
+            <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>EUR/USD</label>
+            <input type="number" step="0.01" value={eurUsd} onChange={e => setEurUsd(parseFloat(e.target.value) || 1.09)}
+              style={{ width: 80, background: C.bg, border: `1px solid ${C.brd}`, color: C.gold, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none' }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>GBP/USD</label>
+            <input type="number" step="0.01" value={gbpUsd} onChange={e => setGbpUsd(parseFloat(e.target.value) || 1.27)}
+              style={{ width: 80, background: C.bg, border: `1px solid ${C.brd}`, color: C.gold, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none' }} />
+          </div>
+          <button onClick={() => { LS.set('ib-api-key', apiKey); LS.set('eur-usd', eurUsd); LS.set('gbp-usd', gbpUsd); setShowCfg(false) }}
             style={{ padding: '8px 16px', background: C.acc, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
             💾 Guardar
           </button>
-          <span style={{ fontSize: 11, color: C.mut }}>Solo en este navegador · console.anthropic.com</span>
         </div>
       )}
 
@@ -783,13 +822,20 @@ Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks
                 + Nueva operación
               </button>
 
-              {/* IB Screenshot */}
-              <button onClick={() => fileRef.current?.click()} disabled={analyzing}
-                style={{ padding: '8px 16px', background: C.surf2, border: `1px solid ${C.brd}`, color: C.dim, borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>
-                {analyzing ? '⏳ Analizando...' : '📸 Subir screenshot IB'}
-              </button>
+              {/* IB Screenshot con selector de cuenta */}
+              <div style={{ display: 'flex', gap: 0, alignItems: 'center', border: `1px solid ${C.brd}`, borderRadius: 8, overflow: 'hidden' }}>
+                <select value={ibCuenta} onChange={e => setIbCuenta(e.target.value)}
+                  style={{ background: C.surf2, border: 'none', borderRight: `1px solid ${C.brd}`, color: ibCuenta === 'pablo' ? C.pablo : C.maria, padding: '8px 10px', fontSize: 12, outline: 'none', cursor: 'pointer', fontWeight: 700 }}>
+                  <option value="pablo">👤 Pablo</option>
+                  <option value="maria">👤 María</option>
+                </select>
+                <button onClick={() => fileRef.current?.click()} disabled={analyzing}
+                  style={{ padding: '8px 14px', background: C.surf2, border: 'none', color: C.dim, cursor: 'pointer', fontSize: 12 }}>
+                  {analyzing ? '⏳ Analizando...' : '📸 Subir screenshot IB'}
+                </button>
+              </div>
               <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
-                onChange={e => { const f = e.target.files[0]; if (f) analyzeIB(f) }} />
+                onChange={e => { const f = e.target.files[0]; if (f) { analyzeIB(f, ibCuenta); e.target.value = '' } }} />
 
               {/* Filtros estado */}
               {['TODAS', 'ABIERTA', 'CERRADA'].map(f => (
@@ -855,8 +901,32 @@ Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks
             <div style={{ background: C.surf, borderRadius: '10px 10px 0 0', border: `1px solid ${C.brd}`, borderBottom: 'none' }}>
               <div style={{ display: 'grid', gridTemplateColumns: GRID,
                 gap: 8, padding: '8px 12px', fontSize: 9, color: C.dim, fontWeight: 700, textTransform: 'uppercase' }}>
-                {['Apertura','Ticker','Estrategia','Vencto.','Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes','Estado',''].map(h => (
-                  <span key={h} style={{ textAlign: ['Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes'].includes(h) ? 'center' : 'left' }}>{h}</span>
+                {[
+                  { h: 'Apertura', col: 'fecha_apertura' },
+                  { h: 'Ticker', col: null },
+                  { h: 'Estrategia', col: null },
+                  { h: 'Vencto.', col: 'vencimiento' },
+                  { h: 'Strike', col: 'strike' },
+                  { h: 'Prima', col: 'prima' },
+                  { h: 'Obj.cierre', col: null },
+                  { h: 'Beneficio', col: 'beneficio' },
+                  { h: 'Rent.Anual', col: 'rent_anual' },
+                  { h: 'Vence/Mes', col: 'vencimiento' },
+                  { h: 'Estado', col: null },
+                  { h: '', col: null }
+                ].map(({ h, col }) => (
+                  <span key={h} onClick={() => {
+                    if (!col) return
+                    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+                    else { setSortCol(col); setSortDir('desc') }
+                  }} style={{
+                    textAlign: ['Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes'].includes(h) ? 'center' : 'left',
+                    cursor: col ? 'pointer' : 'default',
+                    color: sortCol === col ? C.gold : C.dim,
+                    userSelect: 'none'
+                  }}>
+                    {h}{col && sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : col ? ' ⇅' : ''}
+                  </span>
                 ))}
               </div>
             </div>
