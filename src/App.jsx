@@ -840,19 +840,32 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
                 : (op_abierta.notas || '')
             })
           } else if (op_yacerrada) {
-            // Ya cerrada — si el beneficio de IB difiere, corregir automáticamente
+            // Ya cerrada — distinguir dos casos:
+            // A) Misma fecha de cierre + distinto beneficio → corrección de la misma op
+            // B) Fecha de cierre diferente → es una operación NUEVA con mismos parámetros (abrió y cerró rápido)
             const beneficioDetectado = (r.assigned && !r.beneficio) ? null : r.beneficio
+            const mismaFecha = op_yacerrada.fecha_cierre === r.fecha
             const difiere = beneficioDetectado != null &&
               Math.abs((op_yacerrada.beneficio || 0) - beneficioDetectado) > 0.01
-            if (difiere) {
-              // Lista separada — se aplica sin pasar por el filtro ABIERTA
+
+            if (mismaFecha && difiere) {
+              // Caso A: misma fecha, beneficio incorrecto → corregir
               actualizaciones.push({
                 ...op_yacerrada,
                 beneficio: beneficioDetectado,
                 precio_cierre: r.precio_cierre || op_yacerrada.precio_cierre,
                 notas: `Beneficio corregido desde IB: ${beneficioDetectado}$ (antes: ${op_yacerrada.beneficio}$)`
               })
+            } else if (!mismaFecha && beneficioDetectado != null) {
+              // Caso B: fecha diferente → operación nueva cerrada (abrió y cerró rápido, sin apertura en BD)
+              cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA',
+                estrategia: r.estrategia, ticker: r.ticker, fecha_apertura: '',
+                vencimiento: r.vencimiento, strike: r.strike, prima: 0,
+                objetivo_pct: 45, contratos: r.contratos || 1, fecha_cierre: r.fecha,
+                precio_cierre: r.precio_cierre, beneficio: beneficioDetectado,
+                notas: `Nueva op (mismos parámetros que op anterior). ${r.notas || ''}`.trim() })
             } else {
+              // Misma fecha y mismo beneficio → ya estaba bien, ignorar
               cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
             }
           } else {
