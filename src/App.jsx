@@ -681,7 +681,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-6', max_tokens: 1000, temperature: 0,
+          model: 'claude-sonnet-4-6', max_tokens: 4096, temperature: 0,
           messages: [{ role: 'user', content: [
             { type: 'text', text: `INSTRUCCIONES CRÍTICAS — lee esto ANTES de ver la imagen.
 
