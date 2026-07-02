@@ -762,6 +762,8 @@ EJEMPLOS CONCRETOS:
 - "ACN JUN 26 128 Call / Assigned 1 / $0" → CIERRE, estrategia=VCALL, beneficio=0
 - "BLK JUL 17 910 Put / Vendido 1 / $900 / sin PyG" → APERTURA, estrategia=VPUT, prima=900
 - "CMCSA JUN 26 25 Put / Comprado 1 / $206 / -$80.75 rojo" → CIERRE, estrategia=VPUT, beneficio=-80.75, precio_cierre=206
+- "GIS JUL 17 35 Call / Comprado 1 / $295 / -$230.04 rojo" → CIERRE, estrategia=VCALL, beneficio=-230.04, precio_cierre=295
+- "META DEC 18 570 Call / Vendido 1 / $9500 / $977.99 verde" → CIERRE, estrategia=CCALL, beneficio=977.99, precio_cierre=9500
 
 FECHAS: puede haber varias secciones de fechas distintas. Cada operación usa la fecha de su sección.
 ⚠️ Las líneas "June 27, 2026 $64.5" son TOTALES DIARIOS — ignóralas completamente.
