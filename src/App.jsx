@@ -548,6 +548,13 @@ export default function App() {
   const fileRef = useRef()
 
   // Cargar datos
+  // ── Normalización de tickers con aliases conocidos ──────────────
+  const normTicker = t => {
+    const u = (t || '').toUpperCase().trim()
+    const aliases = { 'GOOGL': 'GOOG', 'GOOGLE': 'GOOG', 'BRKA': 'BRK', 'BRKB': 'BRK', 'META': 'META' }
+    return aliases[u] || u
+  }
+
   // ── GitHub Gist sync (datos entre dispositivos) ──────────────────
   const loadFromGist = async () => {
     const tok = LS.get('gh-token'), id = LS.get('gist-id')
@@ -821,7 +828,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
         if (r.tipo === 'CIERRE' && r.ticker && r.vencimiento) {
           const matchKey = o =>
             o.cuenta === cuentaTarget &&
-            o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
+            normTicker(o.ticker) === normTicker(r.ticker) &&
             Number(o.strike) === Number(r.strike) &&
             o.vencimiento === r.vencimiento
           const op_abierta = ops.find(o => matchKey(o) && o.estado === 'ABIERTA')
@@ -886,7 +893,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
 
       // ── Detección de duplicados ──────────────────────────────────
       // Fingerprint: misma cuenta+estrategia+ticker+fecha_apertura+vencimiento+strike
-      const fpOp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+      const fpOp = o => `${o.cuenta}|${o.estrategia}|${normTicker(o.ticker)}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
       const existingFps = new Set(ops.map(fpOp))
       const aperturasSinDup = aperturas.filter(a => !existingFps.has(fpOp(a)))
       const dupCount = aperturas.length - aperturasSinDup.length
