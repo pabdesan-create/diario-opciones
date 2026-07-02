@@ -24,7 +24,7 @@ const dias = (a, b) => a && b ? Math.round((new Date(b) - new Date(a)) / 8640000
 
 function calcOp(op) {
   const exposicion = (op.strike || 0) * 100
-  const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * (1 - op.objetivo_pct / 100)).toFixed(2)) : null
+  const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * op.objetivo_pct / 100).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
   let precio_cierre = op.precio_cierre != null ? op.precio_cierre : null
   if (op.estado === 'CERRADA' && op.prima != null) {
