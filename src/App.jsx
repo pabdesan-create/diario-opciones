@@ -1,3 +1,4 @@
+import ComparadorOpciones from './components/ComparadorOpciones';
 import { useState, useEffect, useRef } from 'react'
 
 // ── Paleta ──────────────────────────────────────────────────────
@@ -989,11 +990,12 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
   const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA')
   const benefTotal = cerradas.reduce((s, o) => s + (o.beneficio || 0), 0)
 
-  const NAV = [
+const NAV = [
     { id: 'pablo', label: '📋 Pablo', group: 'P', color: C.pablo },
     { id: 'maria', label: '📋 María', group: 'M', color: C.maria },
     { id: 'res-pablo', label: '📊 Resultados Pablo', group: 'P', color: C.pablo },
     { id: 'res-maria', label: '📊 Resultados María', group: 'M', color: C.maria },
+    { id: 'comparador', label: '🧮 Comparador', group: 'C', color: C.gold },
   ]
 
   return (
@@ -1146,6 +1148,8 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
         {(tab === 'res-pablo' || tab === 'res-maria') && (
           <ResultsTab ops={ops} cuenta={tab === 'res-pablo' ? 'pablo' : 'maria'} />
         )}
+        {/* COMPARADOR */}
+        {tab === 'comparador' && <ComparadorOpciones />}
 
         {/* OPERACIONES */}
         {(tab === 'pablo' || tab === 'maria') && (
