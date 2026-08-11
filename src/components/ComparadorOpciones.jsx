@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from "react";
-import { Plus, Trash2, ArrowUpDown, TrendingUp, TrendingDown } from "lucide-react";
 
 // ---------- Lógica de cálculo ----------
 function calcularMetricas(op) {
@@ -135,7 +134,7 @@ export default function ComparadorOpciones() {
               }}
               className="mt-3 flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border border-[#3A1E1E] text-[#F87171] hover:bg-[#3A1E1E] transition-colors"
             >
-              <Trash2 size={12} /> Limpiar todo ({operaciones.length})
+              🗑️ Limpiar todo ({operaciones.length})
             </button>
           )}
         </header>
@@ -175,7 +174,7 @@ export default function ComparadorOpciones() {
             </Campo>
             <div className="flex items-end">
               <button onClick={addOperacion} className="w-full h-[38px] rounded-md bg-[#34D399] text-[#0F1419] font-medium text-sm flex items-center justify-center gap-1 hover:bg-[#2BB988] transition-colors">
-                <Plus size={16} /> Añadir
+                ➕ Añadir
               </button>
             </div>
           </div>
@@ -238,7 +237,7 @@ export default function ComparadorOpciones() {
                     </td>
                     <td className="px-3 py-2">
                       <button onClick={() => eliminar(f.id)} className="text-[#5C6773] hover:text-[#F87171] transition-colors">
-                        <Trash2 size={14} />
+                        🗑️
                       </button>
                     </td>
                   </tr>
@@ -291,7 +290,7 @@ function Th({ label, k, onClick, active }) {
       onClick={() => onClick(k)}
     >
       <span className="inline-flex items-center gap-1">
-        {label} <ArrowUpDown size={11} />
+        {label} <span style={{ opacity: 0.6 }}>⇅</span>
       </span>
     </th>
   );
@@ -304,7 +303,7 @@ function Badge({ ok, label }) {
         ok ? "bg-[#1E3A2E] text-[#34D399]" : "bg-[#3A1E1E] text-[#F87171]"
       }`}
     >
-      {ok ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+      {ok ? "✓" : "✗"}
       {label}
     </span>
   );
