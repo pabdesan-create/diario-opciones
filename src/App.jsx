@@ -557,6 +557,8 @@ export default function App() {
   }
 
   // ── GitHub Gist sync (datos entre dispositivos) ──────────────────
+  // Se guarda { ops, ts } — ts = timestamp de la última modificación real,
+  // así comparamos "quién es más reciente" en vez de "quién tiene más filas".
   const loadFromGist = async () => {
     const tok = LS.get('gh-token'), id = LS.get('gist-id')
     if (!tok || !id) return null
@@ -565,14 +567,17 @@ export default function App() {
       if (!r.ok) return null
       const data = await r.json()
       const content = data.files?.['diario-opciones.json']?.content
-      return content ? JSON.parse(content) : null
+      if (!content) return null
+      const parsed = JSON.parse(content)
+      // Compatibilidad con el formato antiguo (array plano sin ts)
+      return Array.isArray(parsed) ? { ops: parsed, ts: 0 } : parsed
     } catch { return null }
   }
 
-  const syncToGist = async (arr) => {
+  const syncToGist = async (arr, ts) => {
     const tok = LS.get('gh-token')
     if (!tok) return
-    const content = JSON.stringify(arr)
+    const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now() })
     try {
       let id = LS.get('gist-id')
       if (!id) {
@@ -598,33 +603,38 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       const seed = buildSeed()
-      const local = LS.get('diario-ops-v1')
+      const localRaw = LS.get('diario-ops-v1')
+      // Compatibilidad con el formato antiguo (array plano sin ts guardado localmente)
+      const local = Array.isArray(localRaw) ? { ops: localRaw, ts: 0 } : localRaw
       // Intentar cargar desde Gist (puede tener datos de otro dispositivo)
       const cloud = await loadFromGist()
-      // Usar la versión con más ops (la más actualizada)
-      let base = local
-      if (cloud && Array.isArray(cloud) && cloud.length > (local?.length || 0)) {
-        base = cloud
-        LS.set('diario-ops-v1', cloud)
-        setSyncStatus(`☁️ Cargado desde Gist (${cloud.length} ops)`)
+      // Gana quien tenga el timestamp más reciente, NO quien tenga más operaciones
+      let base = local?.ops || null
+      if (cloud && Array.isArray(cloud.ops) && (cloud.ts || 0) > (local?.ts || 0)) {
+        base = cloud.ops
+        LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
+        setSyncStatus(`☁️ Cargado desde Gist — versión más reciente (${cloud.ops.length} ops)`)
       }
       if (!base || base.length === 0) {
-        setOps(seed); LS.set('diario-ops-v1', seed); return
+        setOps(seed); LS.set('diario-ops-v1', { ops: seed, ts: Date.now() }); return
       }
       const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
       const baseSet = new Set(base.map(fp))
       const missing = seed.filter(o => !baseSet.has(fp(o)))
       const merged = [...base, ...missing].map(o => calcOp({ ...o }))
-      setOps(merged); LS.set('diario-ops-v1', merged)
+      setOps(merged)
+      // Si solo añadimos ops del seed que faltaban (sin cambio real del usuario), conservamos el ts existente
+      LS.set('diario-ops-v1', { ops: merged, ts: (cloud && (cloud.ts || 0) > (local?.ts || 0)) ? cloud.ts : (local?.ts || Date.now()) })
     }
     init()
   }, [])
 
   const persist = arr => {
-    setOps(arr); LS.set('diario-ops-v1', arr)
+    const ts = Date.now()
+    setOps(arr); LS.set('diario-ops-v1', { ops: arr, ts })
     // Sync a GitHub Gist con debounce de 3s para no saturar la API
     if (syncTimer.current) clearTimeout(syncTimer.current)
-    syncTimer.current = setTimeout(() => syncToGist(arr), 3000)
+    syncTimer.current = setTimeout(() => syncToGist(arr, ts), 3000)
   }
   const cuenta = tab === 'pablo' || tab === 'res-pablo' ? 'pablo' : 'maria'
 
