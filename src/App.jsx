@@ -570,15 +570,16 @@ export default function App() {
       const content = data.files?.['diario-opciones.json']?.content
       if (!content) return null
       const parsed = JSON.parse(content)
-      // Compatibilidad con el formato antiguo (array plano sin ts)
-      return Array.isArray(parsed) ? { ops: parsed, ts: 0 } : parsed
+      // Compatibilidad con el formato antiguo (array plano sin ts/deleted)
+      return Array.isArray(parsed) ? { ops: parsed, ts: 0, deleted: [] } : { deleted: [], ...parsed }
     } catch { return null }
   }
 
   const syncToGist = async (arr, ts) => {
     const tok = LS.get('gh-token')
     if (!tok) { setSyncStatus('❌ Falta el token de GitHub'); return }
-    const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now() })
+    const deleted = LS.get('diario-ops-deleted-v1') || []
+    const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now(), deleted })
     try {
       let id = LS.get('gist-id')
       if (!id) {
@@ -627,16 +628,26 @@ export default function App() {
         LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
         setSyncStatus(`☁️ Cargado desde Gist — versión más reciente (${cloud.ops.length} ops)`)
       }
+      // Lista negra de fingerprints borrados a propósito: unimos la local con la de la nube
+      // (nunca resucitamos desde el seed algo borrado en CUALQUIERA de los dos PCs)
+      const deletedLocal = LS.get('diario-ops-deleted-v1') || []
+      const deletedCloud = (cloud && cloud.deleted) || []
+      const deleted = new Set([...deletedLocal, ...deletedCloud])
+      LS.set('diario-ops-deleted-v1', [...deleted])
       if (!base || base.length === 0) {
         const ts = Date.now()
-        setOps(seed); setDataTs(ts); LS.set('diario-ops-v1', { ops: seed, ts }); return
+        const seedFiltered = seed.filter(o => {
+          const fp0 = `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+          return !deleted.has(fp0)
+        })
+        setOps(seedFiltered); setDataTs(ts); LS.set('diario-ops-v1', { ops: seedFiltered, ts }); return
       }
-      // Lista negra de fingerprints borrados a propósito: nunca los resucitamos desde el seed
-      const deleted = new Set(LS.get('diario-ops-deleted-v1') || [])
       const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-      const baseSet = new Set(base.map(fp))
+      // Quitamos de base cualquier op que esté en la lista negra (por si llegó vía Gist de otro PC)
+      const baseSinBorrados = base.filter(o => !deleted.has(fp(o)))
+      const baseSet = new Set(baseSinBorrados.map(fp))
       const missing = seed.filter(o => !baseSet.has(fp(o)) && !deleted.has(fp(o)))
-      const merged = [...base, ...missing].map(o => calcOp({ ...o }))
+      const merged = [...baseSinBorrados, ...missing].map(o => calcOp({ ...o }))
       setOps(merged); setDataTs(baseTs)
       LS.set('diario-ops-v1', { ops: merged, ts: baseTs })
     }
@@ -651,10 +662,19 @@ export default function App() {
       if (!silent) setSyncStatus('❌ No se pudo leer el Gist — revisa que el token y el Gist ID sean correctos')
       return
     }
+    // Fusionamos también la lista negra de borrados que traiga la nube
+    if (cloud.deleted && cloud.deleted.length) {
+      const deletedLocal = new Set(LS.get('diario-ops-deleted-v1') || [])
+      cloud.deleted.forEach(f => deletedLocal.add(f))
+      LS.set('diario-ops-deleted-v1', [...deletedLocal])
+    }
     if (Array.isArray(cloud.ops) && (cloud.ts || 0) > dataTs) {
-      setOps(cloud.ops); setDataTs(cloud.ts)
-      LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
-      setSyncStatus(`☁️ Actualizado: ${cloud.ops.length} ops (nube: ${fmtTs(cloud.ts)} · antes tenías: ${fmtTs(dataTs)})`)
+      const deleted = new Set(LS.get('diario-ops-deleted-v1') || [])
+      const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+      const cleanOps = cloud.ops.filter(o => !deleted.has(fp(o)))
+      setOps(cleanOps); setDataTs(cloud.ts)
+      LS.set('diario-ops-v1', { ops: cleanOps, ts: cloud.ts })
+      setSyncStatus(`☁️ Actualizado: ${cleanOps.length} ops (nube: ${fmtTs(cloud.ts)} · antes tenías: ${fmtTs(dataTs)})`)
     } else if (!silent) {
       setSyncStatus(`✓ Ya tienes la última versión — local: ${fmtTs(dataTs)} (${ops.length} ops) · nube: ${fmtTs(cloud.ts)} (${cloud.ops?.length ?? '?'} ops)`)
     }
