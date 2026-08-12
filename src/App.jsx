@@ -545,6 +545,7 @@ export default function App() {
   const [githubToken, setGithubToken] = useState(LS.get('gh-token') || '')
   const [gistId, setGistId] = useState(LS.get('gist-id') || '')
   const [syncStatus, setSyncStatus] = useState('')
+  const [dataTs, setDataTs] = useState(0)
   const syncTimer = useRef(null)
   const fileRef = useRef()
 
@@ -610,28 +611,49 @@ export default function App() {
       const cloud = await loadFromGist()
       // Gana quien tenga el timestamp más reciente, NO quien tenga más operaciones
       let base = local?.ops || null
+      let baseTs = local?.ts || 0
       if (cloud && Array.isArray(cloud.ops) && (cloud.ts || 0) > (local?.ts || 0)) {
         base = cloud.ops
+        baseTs = cloud.ts
         LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
         setSyncStatus(`☁️ Cargado desde Gist — versión más reciente (${cloud.ops.length} ops)`)
       }
       if (!base || base.length === 0) {
-        setOps(seed); LS.set('diario-ops-v1', { ops: seed, ts: Date.now() }); return
+        const ts = Date.now()
+        setOps(seed); setDataTs(ts); LS.set('diario-ops-v1', { ops: seed, ts }); return
       }
       const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
       const baseSet = new Set(base.map(fp))
       const missing = seed.filter(o => !baseSet.has(fp(o)))
       const merged = [...base, ...missing].map(o => calcOp({ ...o }))
-      setOps(merged)
-      // Si solo añadimos ops del seed que faltaban (sin cambio real del usuario), conservamos el ts existente
-      LS.set('diario-ops-v1', { ops: merged, ts: (cloud && (cloud.ts || 0) > (local?.ts || 0)) ? cloud.ts : (local?.ts || Date.now()) })
+      setOps(merged); setDataTs(baseTs)
+      LS.set('diario-ops-v1', { ops: merged, ts: baseTs })
     }
     init()
   }, [])
 
+  // Tirar de la nube manualmente (o desde el polling automático) sin recargar la página
+  const pullFromGist = async (silent) => {
+    const cloud = await loadFromGist()
+    if (cloud && Array.isArray(cloud.ops) && (cloud.ts || 0) > dataTs) {
+      setOps(cloud.ops); setDataTs(cloud.ts)
+      LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
+      setSyncStatus(`☁️ Actualizado desde otro PC — ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`)
+    } else if (!silent) {
+      setSyncStatus('✓ Ya tienes la última versión')
+    }
+  }
+
+  // Comprobar cambios de otro PC cada 30s mientras la pestaña está abierta (si hay sync configurado)
+  useEffect(() => {
+    if (!githubToken || !gistId) return
+    const interval = setInterval(() => pullFromGist(true), 30000)
+    return () => clearInterval(interval)
+  }, [githubToken, gistId, dataTs])
+
   const persist = arr => {
     const ts = Date.now()
-    setOps(arr); LS.set('diario-ops-v1', { ops: arr, ts })
+    setOps(arr); setDataTs(ts); LS.set('diario-ops-v1', { ops: arr, ts })
     // Sync a GitHub Gist con debounce de 3s para no saturar la API
     if (syncTimer.current) clearTimeout(syncTimer.current)
     syncTimer.current = setTimeout(() => syncToGist(arr, ts), 3000)
@@ -1122,19 +1144,30 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
         {/* Tercera fila: sync entre dispositivos */}
         <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '10px 20px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 10, color: C.acc, fontWeight: 700, textTransform: 'uppercase', marginRight: 4 }}>☁️ Sync entre PCs:</span>
-          <div style={{ flex: 1, minWidth: 280, maxWidth: 420 }}>
+          <div style={{ minWidth: 260, maxWidth: 340 }}>
             <input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)}
               placeholder="GitHub Personal Access Token (scope: gist)"
               style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 6, padding: '6px 10px', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
           </div>
-          {gistId && <span style={{ fontSize: 10, color: C.grn }}>Gist: {gistId.slice(0,8)}…</span>}
+          <div style={{ minWidth: 180, maxWidth: 220 }}>
+            <input value={gistId} onChange={e => setGistId(e.target.value.trim())}
+              placeholder="Gist ID (pégalo del otro PC)"
+              style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.grn, borderRadius: 6, padding: '6px 10px', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+          </div>
           <span style={{ fontSize: 11, color: syncStatus.includes('⚠️') ? '#f97316' : C.grn }}>{syncStatus}</span>
-          <button onClick={() => { LS.set('gh-token', githubToken); syncToGist(ops) }}
+          <button onClick={() => { LS.set('gh-token', githubToken); LS.set('gist-id', gistId); syncToGist(ops, dataTs) }}
             style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.acc}`, color: C.acc, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            {gistId ? '☁️ Sync ahora' : '☁️ Conectar'}
+            {gistId ? '☁️ Subir esta versión' : '☁️ Conectar'}
+          </button>
+          <button onClick={() => { LS.set('gh-token', githubToken); LS.set('gist-id', gistId); pullFromGist(false) }}
+            style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.grn}`, color: C.grn, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            🔄 Traer última versión
           </button>
           <a href="https://github.com/settings/tokens/new?scopes=gist&description=DiarioOpciones" target="_blank"
             style={{ fontSize: 10, color: C.dim }}>¿Cómo obtener el token?</a>
+          <span style={{ fontSize: 10, color: C.dim, width: '100%' }}>
+            Mismo token + mismo Gist ID en ambos PCs = sync automático cada 30s. Copia el Gist ID de un PC y pégalo en el otro para enlazarlos.
+          </span>
         </div>
         </>
       )}
