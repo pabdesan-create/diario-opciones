@@ -633,14 +633,19 @@ export default function App() {
   }, [])
 
   // Tirar de la nube manualmente (o desde el polling automático) sin recargar la página
+  const fmtTs = ts => ts ? new Date(ts).toLocaleString('es-ES', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—'
   const pullFromGist = async (silent) => {
     const cloud = await loadFromGist()
-    if (cloud && Array.isArray(cloud.ops) && (cloud.ts || 0) > dataTs) {
+    if (!cloud) {
+      if (!silent) setSyncStatus('❌ No se pudo leer el Gist — revisa que el token y el Gist ID sean correctos')
+      return
+    }
+    if (Array.isArray(cloud.ops) && (cloud.ts || 0) > dataTs) {
       setOps(cloud.ops); setDataTs(cloud.ts)
       LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
-      setSyncStatus(`☁️ Actualizado desde otro PC — ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`)
+      setSyncStatus(`☁️ Actualizado: ${cloud.ops.length} ops (nube: ${fmtTs(cloud.ts)} · antes tenías: ${fmtTs(dataTs)})`)
     } else if (!silent) {
-      setSyncStatus('✓ Ya tienes la última versión')
+      setSyncStatus(`✓ Ya tienes la última versión — local: ${fmtTs(dataTs)} (${ops.length} ops) · nube: ${fmtTs(cloud.ts)} (${cloud.ops?.length ?? '?'} ops)`)
     }
   }
 
@@ -1154,7 +1159,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
               placeholder="Gist ID (pégalo del otro PC)"
               style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.grn, borderRadius: 6, padding: '6px 10px', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
           </div>
-          <span style={{ fontSize: 11, color: syncStatus.includes('⚠️') ? '#f97316' : C.grn }}>{syncStatus}</span>
+          <span style={{ fontSize: 11, color: syncStatus.includes('⚠️') || syncStatus.includes('❌') ? '#f97316' : C.grn }}>{syncStatus}</span>
           <button onClick={() => { LS.set('gh-token', githubToken); LS.set('gist-id', gistId); syncToGist(ops, dataTs) }}
             style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.acc}`, color: C.acc, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
             {gistId ? '☁️ Subir esta versión' : '☁️ Conectar'}
@@ -1163,10 +1168,12 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
             style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.grn}`, color: C.grn, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
             🔄 Traer última versión
           </button>
+          {gistId && <a href={`https://gist.github.com/${gistId}`} target="_blank" rel="noreferrer"
+            style={{ fontSize: 10, color: C.acc }}>👁 Ver Gist en GitHub</a>}
           <a href="https://github.com/settings/tokens/new?scopes=gist&description=DiarioOpciones" target="_blank"
             style={{ fontSize: 10, color: C.dim }}>¿Cómo obtener el token?</a>
           <span style={{ fontSize: 10, color: C.dim, width: '100%' }}>
-            Mismo token + mismo Gist ID en ambos PCs = sync automático cada 30s. Copia el Gist ID de un PC y pégalo en el otro para enlazarlos.
+            Datos locales de este PC: {ops.length} ops · última modificación {fmtTs(dataTs)}. Mismo token + mismo Gist ID en ambos PCs = sync automático cada 30s. Copia el Gist ID de un PC y pégalo en el otro para enlazarlos.
           </span>
         </div>
         </>
