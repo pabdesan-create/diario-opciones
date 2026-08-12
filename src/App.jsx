@@ -577,7 +577,7 @@ export default function App() {
 
   const syncToGist = async (arr, ts) => {
     const tok = LS.get('gh-token')
-    if (!tok) return
+    if (!tok) { setSyncStatus('❌ Falta el token de GitHub'); return }
     const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now() })
     try {
       let id = LS.get('gist-id')
@@ -589,16 +589,25 @@ export default function App() {
             files: { 'diario-opciones.json': { content } } })
         })
         const data = await r.json()
-        if (data.id) { LS.set('gist-id', data.id); setGistId(data.id); id = data.id }
+        if (!r.ok || !data.id) {
+          setSyncStatus(`❌ GitHub rechazó la creación del Gist: ${data.message || r.status} — revisa que el token tenga el scope "gist" y no haya caducado`)
+          return
+        }
+        LS.set('gist-id', data.id); setGistId(data.id); id = data.id
       } else {
-        await fetch(`https://api.github.com/gists/${id}`, {
+        const r = await fetch(`https://api.github.com/gists/${id}`, {
           method: 'PATCH',
           headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ files: { 'diario-opciones.json': { content } } })
         })
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}))
+          setSyncStatus(`❌ GitHub rechazó la actualización: ${data.message || r.status} — comprueba el token y el Gist ID`)
+          return
+        }
       }
-      setSyncStatus(`☁️ ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`)
-    } catch { setSyncStatus('⚠️ Error sync') }
+      setSyncStatus(`☁️ Subido correctamente — ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} (${arr.length} ops)`)
+    } catch (e) { setSyncStatus(`⚠️ Error de red al sincronizar: ${e.message}`) }
   }
 
   useEffect(() => {
@@ -622,9 +631,11 @@ export default function App() {
         const ts = Date.now()
         setOps(seed); setDataTs(ts); LS.set('diario-ops-v1', { ops: seed, ts }); return
       }
+      // Lista negra de fingerprints borrados a propósito: nunca los resucitamos desde el seed
+      const deleted = new Set(LS.get('diario-ops-deleted-v1') || [])
       const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
       const baseSet = new Set(base.map(fp))
-      const missing = seed.filter(o => !baseSet.has(fp(o)))
+      const missing = seed.filter(o => !baseSet.has(fp(o)) && !deleted.has(fp(o)))
       const merged = [...base, ...missing].map(o => calcOp({ ...o }))
       setOps(merged); setDataTs(baseTs)
       LS.set('diario-ops-v1', { ops: merged, ts: baseTs })
@@ -712,7 +723,17 @@ export default function App() {
     })
   }
 
-  const delOp = id => { if (confirm('¿Eliminar operación?')) persist(ops.filter(o => o.id !== id)) }
+  const delOp = id => {
+    if (!confirm('¿Eliminar operación?')) return
+    const op = ops.find(o => o.id === id)
+    if (op) {
+      const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
+      const deleted = new Set(LS.get('diario-ops-deleted-v1') || [])
+      deleted.add(fp(op))
+      LS.set('diario-ops-deleted-v1', [...deleted])
+    }
+    persist(ops.filter(o => o.id !== id))
+  }
 
   // Analizar screenshot de IB
   const analyzeIB = async (file, cuentaParam) => {
@@ -1136,6 +1157,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
           <button onClick={() => {
             if (confirm('⚠️ ¿Reset completo al seed? Se perderán todas las operaciones añadidas manualmente. Exporta un backup primero si lo necesitas.')) {
               const seed = buildSeed()
+              LS.set('diario-ops-deleted-v1', [])
               persist(seed)
               setShowCfg(false)
               alert(`✅ Reset al seed: ${seed.length} operaciones`)
