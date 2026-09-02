@@ -1,4 +1,3 @@
-import ComparadorOpciones from './components/ComparadorOpciones';
 import { useState, useEffect, useRef } from 'react'
 
 // ── Paleta ──────────────────────────────────────────────────────
@@ -21,23 +20,26 @@ const fmtNum = n => n == null ? '—' : n.toLocaleString('es-ES', { minimumFract
 const fmtPct = n => n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
 const mesLabel = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }) : ''
 const mesKey = d => d ? d.slice(0, 7) : ''
+const curSym = d => d === 'HKD' ? 'HK$' : '$'
+const multDefault = () => 100 // valor de partida editable; en HKD el multiplicador real varía por valor y se calcula desde el extracto (importe÷precio÷contratos) o se lee del paréntesis junto al strike
+const toUSD = (amount, divisa, fx) => amount == null ? amount : (divisa === 'HKD' ? amount / (fx || 7.83) : amount)
 const dias = (a, b) => a && b ? Math.round((new Date(b) - new Date(a)) / 86400000) : null
 
 function calcOp(op) {
-  const exposicion = (op.strike || 0) * 100
-  const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * op.objetivo_pct / 100).toFixed(2)) : null
+  const mult = op.multiplicador || 100
+  const exposicion = (op.strike || 0) * mult
+  // prima y precio_cierre son el TOTAL del contrato (no por acción)
+  // obj_precio = total a pagar al cerrar para conseguir el objetivo de beneficio
+  const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * (1 - op.objetivo_pct / 100)).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
-  let precio_cierre = op.precio_cierre != null ? op.precio_cierre : null
-  if (op.estado === 'CERRADA' && op.prima != null) {
-    if (beneficio == null && precio_cierre != null)
-      beneficio = parseFloat((op.prima - precio_cierre).toFixed(2))
-    if (beneficio != null)
-      precio_cierre = parseFloat((op.prima - beneficio).toFixed(2))
+  if (op.estado === 'CERRADA' && op.precio_cierre != null && op.prima != null && beneficio == null) {
+    // beneficio = prima_total - coste_cierre_total (ambos en dólares totales)
+    beneficio = parseFloat((op.prima - op.precio_cierre).toFixed(2))
   }
   const d = dias(op.fecha_apertura, op.fecha_cierre)
   const rent_total = beneficio != null && exposicion ? parseFloat((beneficio / exposicion * 100).toFixed(4)) : null
   const rent_anual = rent_total != null && d > 0 ? parseFloat((rent_total * 365 / d).toFixed(2)) : null
-  return { ...op, exposicion, obj_precio, beneficio, precio_cierre, dias: d, rent_total, rent_anual }
+  return { ...op, exposicion, obj_precio, beneficio, dias: d, rent_total, rent_anual }
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -116,15 +118,6 @@ function buildSeed() {
     { mes:'Junio', estado:'CERRADA', fecha:46178, estrategia:'VPUT', ticker:'TSM', venc:46220, strike:380, prima:954, obj_pct:45, cierre:46188, benef:402.13, precio100:38000, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'PYPL', venc:46191, strike:43.5, prima:24, obj_pct:45, cierre:46190, benef:10.9, precio100:4350, dias:null },
     { mes:'Junio', estado:'CERRADA', fecha:46182, estrategia:'VCALL', ticker:'NU', venc:46199, strike:12, prima:39, obj_pct:45, cierre:46190, benef:-93.1, precio100:1200, dias:null },
-    // Operaciones Junio faltantes (reconciliadas vs Excel)
-    { mes:'Junio', estado:'CERRADA', fecha:46161, estrategia:'VPUT', ticker:'AWK', venc:46191, strike:120, prima:152, obj_pct:45, cierre:46178, benef:82.94, precio100:12000 },
-    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASTS', venc:46191, strike:null, prima:null, obj_pct:45, cierre:46189, benef:110.73, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46170, estrategia:'VPUT', ticker:'OMC', venc:46191, strike:70, prima:104, obj_pct:45, cierre:46181, benef:62.00, precio100:7000 },
-    { mes:'Junio', estado:'CERRADA', fecha:46177, estrategia:'VPUT', ticker:'ASML', venc:46220, strike:null, prima:null, obj_pct:45, cierre:46189, benef:598.32, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASML', venc:46164, strike:null, prima:3899, obj_pct:45, cierre:46174, benef:1098.37, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46164, estrategia:'COMBO', ticker:'ASTS', venc:46164, strike:null, prima:928, obj_pct:45, cierre:46174, benef:-0.28, precio100:0 },
-    { mes:'Junio', estado:'CERRADA', fecha:46171, estrategia:'VPUT', ticker:'RMD', venc:46191, strike:185, prima:185, obj_pct:45, cierre:46182, benef:92.90, precio100:18500 },
-    { mes:'Junio', estado:'CERRADA', fecha:46174, estrategia:'VPUT', ticker:'V', venc:46191, strike:295, prima:65, obj_pct:45, cierre:46178, benef:32.12, precio100:29500 },
     // Abiertas
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'VPUT', ticker:'NOW', venc:46220, strike:90, prima:145, obj_pct:45, precio100:9000 },
     { mes:'A', estado:'ABIERTA', fecha:46178, estrategia:'CCALL', ticker:'META', venc:46374, strike:580, prima:8520, obj_pct:45, precio100:58000 },
@@ -187,6 +180,8 @@ function buildSeed() {
     ticker: r.ticker,
     vencimiento: excelDate(r.venc),
     strike: r.strike || null,
+    divisa: 'USD',
+    multiplicador: 100,
     prima: r.prima || null,      // total contrato en $
     objetivo_pct: r.obj_pct || 45,
     margen: null,
@@ -209,8 +204,8 @@ function buildSeed() {
 // ── Estado vacío formulario ──────────────────────────────────────
 const EMPTY = {
   cuenta: 'pablo', estado: 'ABIERTA', fecha_apertura: new Date().toISOString().slice(0,10),
-  estrategia: 'VPUT', ticker: '', vencimiento: '', strike: '', prima: '', objetivo_pct: 45,
-  contratos: 1, margen: '', comision: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
+  estrategia: 'VPUT', ticker: '', vencimiento: '', strike: '', divisa: 'USD', multiplicador: 100, prima: '', objetivo_pct: 45,
+  margen: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
 }
 
 // ══════════════════════════════════════
@@ -259,10 +254,10 @@ const diasVence = venc => {
 }
 const mesCierre = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).replace(' ', "'") : null
 
-const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 75px 60px 75px 35px'
+const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 60px 75px 60px 50px'
 
 // Tabla de operaciones
-function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
+function OpRow({ op, onEdit, onDelete, onClose }) {
   const [exp, setExp] = useState(false)
   const neg = op.beneficio != null && op.beneficio < 0
   const colBenef = op.beneficio == null ? C.dim : neg ? C.red : C.grn
@@ -274,18 +269,16 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
 
   return (
     <div style={{ borderBottom: `1px solid ${C.brd}`, transition: 'background .1s',
-      ...(isNew && { boxShadow: `inset 3px 0 0 ${C.grn}`, background: C.grn + '08' }),
-      ...(alertaVence && !isNew && { boxShadow: `inset 3px 0 0 ${dv <= 0 ? C.red : '#f97316'}` }) }}
-      onMouseEnter={e => e.currentTarget.style.background = isNew ? C.grn + '15' : C.surf2}
-      onMouseLeave={e => e.currentTarget.style.background = isNew ? C.grn + '08' : 'transparent'}>
+      ...(alertaVence && { boxShadow: `inset 3px 0 0 ${dv <= 0 ? C.red : '#f97316'}` }) }}
+      onMouseEnter={e => e.currentTarget.style.background = C.surf2}
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
       <div onClick={() => setExp(e => !e)}
         style={{ display: 'grid', gridTemplateColumns: GRID,
           gap: 8, padding: '8px 12px', cursor: 'pointer', alignItems: 'center', fontSize: 12 }}>
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.fecha_apertura)}</span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <Badge text={op.ticker} color={C.acc} />
-          {op.contratos > 1 && <span style={{ fontSize: 9, color: C.gold, fontWeight: 700 }}>×{op.contratos}</span>}
-          {isNew && <span style={{ fontSize: 8, background: C.grn, color: '#000', borderRadius: 3, padding: '1px 4px', fontWeight: 800 }}>NEW</span>}
+          {op.divisa === 'HKD' && <Badge text="HK$" color={C.gold} />}
         </span>
         <Badge text={op.estrategia} color={estratColor(op.estrategia)} />
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.vencimiento)}</span>
@@ -297,10 +290,6 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
         </span>
         <span style={{ color: colBenef, textAlign: 'right', fontSize: 11 }}>
           {op.rent_anual != null ? fmtPct(op.rent_anual) : '—'}
-        </span>
-        {/* Fecha cierre */}
-        <span style={{ color: C.dim, fontSize: 11, textAlign: 'center' }}>
-          {op.fecha_cierre ? fmtDate(op.fecha_cierre) : '—'}
         </span>
         {/* Columna combinada: VENCE (abierta) o MES CIERRE (cerrada) */}
         {op.estado === 'ABIERTA' ? (
@@ -332,20 +321,17 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
               ['Vencimiento', fmtDate(op.vencimiento)],
               ['Fecha cierre', fmtDate(op.fecha_cierre)],
               ['Strike', op.strike ?? '—'],
-              ['Contratos', op.contratos > 1 ? `${op.contratos} contratos` : '1 contrato'],
-              ['Comisión apertura', op.comision != null ? `${fmtNum(op.comision)} $` : '—'],
-              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)} $` : '—'],
-              ...(op.contratos > 1 && op.prima != null ? [['Prima / contrato', `${fmtNum(parseFloat((op.prima / op.contratos).toFixed(2)))} $`]] : []),
-              ['Precio cierre', op.precio_cierre != null ? `${fmtNum(op.precio_cierre)} $` : '—'],
-              ['Objetivo cierre', op.obj_precio != null ? `${fmtNum(op.obj_precio)} $` : '—'],
-              ['Margen req.', op.margen != null ? `${fmtNum(op.margen)} $` : '—'],
-              ['Exposición (×100)', op.exposicion != null ? `${fmtNum(op.exposicion)} $` : '—'],
-              ['Beneficio neto', op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)} $` : '—'],
-              ...(op.contratos > 1 && op.beneficio != null ? [['Beneficio / contrato', `${op.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((op.beneficio / op.contratos).toFixed(2)))} $`]] : []),
+              ['Divisa', op.divisa || 'USD'],
+              ['Prima cobrada', op.prima != null ? `${curSym(op.divisa)}${fmtNum(op.prima)}` : '—'],
+              ['Precio cierre', op.precio_cierre != null ? `${curSym(op.divisa)}${fmtNum(op.precio_cierre)}` : '—'],
+              ['Objetivo cierre', op.obj_precio != null ? `${curSym(op.divisa)}${fmtNum(op.obj_precio)}` : '—'],
+              ['Margen req.', op.margen != null ? `${curSym(op.divisa)}${fmtNum(op.margen)}` : '—'],
+              [`Exposición (×${op.multiplicador || 100})`, op.exposicion != null ? `${curSym(op.divisa)}${fmtNum(op.exposicion)}` : '—'],
+              ['Beneficio neto', op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)} ${curSym(op.divisa)}` : '—'],
               ['Rent. total', op.rent_total != null ? fmtPct(op.rent_total) : '—'],
               ['Rent. anualizada', op.rent_anual != null ? fmtPct(op.rent_anual) : '—'],
               ['Días', op.dias ?? '—'],
-              ['Adjudicación', op.adjudicacion != null ? `${fmtNum(op.adjudicacion)} $` : '—'],
+              ['Adjudicación', op.adjudicacion != null ? fmtNum(op.adjudicacion) : '—'],
             ].map(([l, v]) => (
               <div key={l} style={{ background: C.surf2, borderRadius: 6, padding: '6px 10px' }}>
                 <div style={{ fontSize: 9, color: C.dim, textTransform: 'uppercase', marginBottom: 2 }}>{l}</div>
@@ -371,7 +357,8 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
 function OpForm({ initial, onSave, onCancel, titulo }) {
   const [f, setF] = useState(() => ({ ...EMPTY, ...initial }))
   const upd = k => v => setF(p => ({ ...p, [k]: v }))
-  const calc = calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null, objetivo_pct: +f.objetivo_pct || 45,
+  const calc = calcOp({ ...f, strike: +f.strike || null, multiplicador: +f.multiplicador || multDefault(),
+    prima: +f.prima || null, objetivo_pct: +f.objetivo_pct || 45,
     margen: +f.margen || null, precio_cierre: +f.precio_cierre || null,
     beneficio: f.beneficio !== '' && f.beneficio != null ? +f.beneficio : null,
     adjudicacion: +f.adjudicacion || null })
@@ -390,9 +377,10 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
         <Input label="Fecha apertura" value={f.fecha_apertura} onChange={upd('fecha_apertura')} type="date" />
         <Input label="Vencimiento" value={f.vencimiento} onChange={upd('vencimiento')} type="date" />
         <Input label="Strike" value={f.strike} onChange={upd('strike')} type="number" step="0.5" />
-        <Input label="Prima total contrato ($)" value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
-        <Input label="Nº contratos" value={f.contratos ?? 1} onChange={upd('contratos')} type="number" step="1" />
-        <Input label="Comisión apertura ($)" value={f.comision ?? ''} onChange={upd('comision')} type="number" step="0.01" placeholder="ej: 0.65" />
+        <Select label="Divisa" value={f.divisa || 'USD'} onChange={upd('divisa')}
+          options={[{ v: 'USD', l: '🇺🇸 USD' }, { v: 'HKD', l: '🇭🇰 HKD' }]} />
+        <Input label="Multiplicador contrato" value={f.multiplicador ?? multDefault()} onChange={upd('multiplicador')} type="number" step="1" placeholder="100 USA · en HK varía (calcular: importe÷precio÷contratos)" />
+        <Input label={`Prima total contrato (${curSym(f.divisa)})`} value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
         <Input label="Objetivo cierre %" value={f.objetivo_pct} onChange={upd('objetivo_pct')} type="number" step="1" />
         <Input label="Margen requerido ($)" value={f.margen} onChange={upd('margen')} type="number" step="1" />
       </div>
@@ -400,25 +388,24 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
       {/* Preview precio objetivo */}
       {calc.obj_precio != null && (
         <div style={{ background: C.bg, border: `1px solid ${C.gold}40`, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20 }}>
-          <div><div style={{ fontSize: 9, color: C.dim }}>PRECIO OBJETIVO CIERRE</div><div style={{ fontSize: 16, fontWeight: 700, color: C.gold }}>{fmtNum(calc.obj_precio)}</div></div>
-          <div><div style={{ fontSize: 9, color: C.dim }}>EXPOSICIÓN REAL</div><div style={{ fontSize: 16, fontWeight: 700, color: C.dim }}>{fmtNum(calc.exposicion)}</div></div>
+          <div><div style={{ fontSize: 9, color: C.dim }}>PRECIO OBJETIVO CIERRE</div><div style={{ fontSize: 16, fontWeight: 700, color: C.gold }}>{curSym(f.divisa)}{fmtNum(calc.obj_precio)}</div></div>
+          <div><div style={{ fontSize: 9, color: C.dim }}>EXPOSICIÓN REAL (×{f.multiplicador || multDefault()})</div><div style={{ fontSize: 16, fontWeight: 700, color: C.dim }}>{curSym(f.divisa)}{fmtNum(calc.exposicion)}</div></div>
         </div>
       )}
 
       {f.estado === 'CERRADA' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
           <Input label="Fecha cierre" value={f.fecha_cierre} onChange={upd('fecha_cierre')} type="date" />
-          <Input label="Precio cierre total ($)" value={f.precio_cierre} onChange={upd('precio_cierre')} type="number" step="0.01" />
-          <Input label="Beneficio neto ($) — opcional" value={f.beneficio} onChange={upd('beneficio')} type="number" step="0.01" />
-          <Input label="Adjudicación ($)" value={f.adjudicacion} onChange={upd('adjudicacion')} type="number" step="0.01" />
+          <Input label={`Precio cierre total (${curSym(f.divisa)})`} value={f.precio_cierre} onChange={upd('precio_cierre')} type="number" step="0.01" />
+          <Input label={`Beneficio neto (${curSym(f.divisa)}) — opcional`} value={f.beneficio} onChange={upd('beneficio')} type="number" step="0.01" />
+          <Input label={`Adjudicación (${curSym(f.divisa)})`} value={f.adjudicacion} onChange={upd('adjudicacion')} type="number" step="0.01" />
         </div>
       )}
 
       {/* Preview resultados */}
       {f.estado === 'CERRADA' && calc.rent_anual != null && (
-        <div style={{ background: C.bg, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          {[['Beneficio total', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(calc.beneficio)} $`, calc.beneficio >= 0 ? C.grn : C.red],
-            ...((f.contratos > 1) ? [['Por contrato', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((calc.beneficio / f.contratos).toFixed(2)))} $`, calc.beneficio >= 0 ? C.grn : C.red]] : []),
+        <div style={{ background: C.bg, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20 }}>
+          {[['Beneficio', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(calc.beneficio)} ${curSym(f.divisa)}`, calc.beneficio >= 0 ? C.grn : C.red],
             ['Rent. total', fmtPct(calc.rent_total), calc.rent_total >= 0 ? C.grn : C.red],
             ['Rent. anual', fmtPct(calc.rent_anual), calc.rent_anual >= 0 ? C.grn : C.red],
             ['Días', `${calc.dias}d`, C.dim]].map(([l, v, col]) => (
@@ -430,9 +417,9 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
       <Input label="Notas" value={f.notas} onChange={upd('notas')} placeholder="Roll, adjudicación, comentarios..." />
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        <button onClick={() => onSave(calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null,
-          contratos: +f.contratos || 1,
-          comision: +f.comision || null,
+        <button onClick={() => onSave(calcOp({ ...f, strike: +f.strike || null,
+          divisa: f.divisa || 'USD', multiplicador: +f.multiplicador || multDefault(),
+          prima: +f.prima || null,
           objetivo_pct: +f.objetivo_pct || 45, margen: +f.margen || null,
           precio_cierre: +f.precio_cierre || null,
           beneficio: f.beneficio !== '' && f.beneficio != null ? +f.beneficio : null,
@@ -448,17 +435,17 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
   )
 }
 
-// Tab resultados por mes
-function ResultsTab({ ops, cuenta }) {
+// Tab resultados por mes — sumatorios finales SIEMPRE en USD (HKD se convierte con fxRate)
+function ResultsTab({ ops, cuenta, fxRate }) {
   const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA' && o.beneficio != null)
+  const hayHKD = cerradas.some(o => (o.divisa || 'USD') === 'HKD')
   const byMes = {}
   cerradas.forEach(op => {
-    // Usar fecha_cierre, y si no existe usar vencimiento como aproximación
     const fechaRef = op.fecha_cierre || op.vencimiento || op.fecha_apertura
     const k = mesKey(fechaRef)
     if (!k) return
     if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(fechaRef) }
-    byMes[k].total = Math.round((byMes[k].total + op.beneficio) * 100) / 100
+    byMes[k].total += toUSD(op.beneficio, op.divisa, fxRate) || 0
     byMes[k].count += 1
   })
   const meses = Object.entries(byMes).sort(([a], [b]) => a.localeCompare(b))
@@ -467,6 +454,11 @@ function ResultsTab({ ops, cuenta }) {
 
   return (
     <div>
+      {hayHKD && (
+        <div style={{ fontSize: 11, color: C.dim, marginBottom: 12 }}>
+          💱 Operaciones en HKD convertidas a USD para los sumatorios (TC 1 USD = {fxRate} HKD)
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 12, marginBottom: 20 }}>
         {[['Total acumulado', `${totalGeneral >= 0 ? '+' : ''}${fmtNum(totalGeneral)} $`, totalGeneral >= 0 ? C.grn : C.red],
           ['Promedio mensual', `${promedio >= 0 ? '+' : ''}${fmtNum(promedio)} $`, promedio >= 0 ? C.grn : C.red],
@@ -534,166 +526,33 @@ export default function App() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeMsg, setAnalyzeMsg] = useState('')
   const [showCfg, setShowCfg] = useState(false)
-  const [pendingCierres, setPendingCierres] = useState([])  // cola de cierres sin vincular
-  const [sortCol, setSortCol] = useState('fecha_apertura')
-  const [sortDir, setSortDir] = useState('desc')
-  const [ibCuenta, setIbCuenta] = useState('pablo')
-  const [eurUsd, setEurUsd] = useState(() => parseFloat(LS.get('eur-usd') || '1.09'))
-  const [gbpUsd, setGbpUsd] = useState(() => parseFloat(LS.get('gbp-usd') || '1.27'))
-  const [lastBatch, setLastBatch] = useState(new Set()) // IDs del último screenshot
-  const [soloNuevas, setSoloNuevas] = useState(false)   // filtro "ver solo nuevas"
-  const [githubToken, setGithubToken] = useState(LS.get('gh-token') || '')
-  const [gistId, setGistId] = useState(LS.get('gist-id') || '')
-  const [syncStatus, setSyncStatus] = useState('')
-  const [dataTs, setDataTs] = useState(0)
-  const syncTimer = useRef(null)
+  const [fxRate, setFxRate] = useState(LS.get('fx-hkdusd') || 7.83) // HKD por 1 USD
+  const [fxLoading, setFxLoading] = useState(false)
   const fileRef = useRef()
 
   // Cargar datos
-  // ── Normalización de tickers con aliases conocidos ──────────────
-  const normTicker = t => {
-    const u = (t || '').toUpperCase().trim()
-    const aliases = { 'GOOGL': 'GOOG', 'GOOGLE': 'GOOG', 'BRKA': 'BRK', 'BRKB': 'BRK', 'META': 'META' }
-    return aliases[u] || u
-  }
-
-  // ── GitHub Gist sync (datos entre dispositivos) ──────────────────
-  // Se guarda { ops, ts } — ts = timestamp de la última modificación real,
-  // así comparamos "quién es más reciente" en vez de "quién tiene más filas".
-  const loadFromGist = async () => {
-    const tok = LS.get('gh-token'), id = LS.get('gist-id')
-    if (!tok || !id) return null
-    try {
-      const r = await fetch(`https://api.github.com/gists/${id}`, { headers: { Authorization: `Bearer ${tok}` } })
-      if (!r.ok) return null
-      const data = await r.json()
-      const content = data.files?.['diario-opciones.json']?.content
-      if (!content) return null
-      const parsed = JSON.parse(content)
-      // Compatibilidad con el formato antiguo (array plano sin ts/deleted)
-      return Array.isArray(parsed) ? { ops: parsed, ts: 0, deleted: [] } : { deleted: [], ...parsed }
-    } catch { return null }
-  }
-
-  const syncToGist = async (arr, ts) => {
-    const tok = LS.get('gh-token')
-    if (!tok) { setSyncStatus('❌ Falta el token de GitHub'); return }
-    const deleted = LS.get('diario-ops-deleted-v1') || []
-    const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now(), deleted })
-    try {
-      let id = LS.get('gist-id')
-      if (!id) {
-        const r = await fetch('https://api.github.com/gists', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: 'Diario de Opciones — sync automático', public: false,
-            files: { 'diario-opciones.json': { content } } })
-        })
-        const data = await r.json()
-        if (!r.ok || !data.id) {
-          setSyncStatus(`❌ GitHub rechazó la creación del Gist: ${data.message || r.status} — revisa que el token tenga el scope "gist" y no haya caducado`)
-          return
-        }
-        LS.set('gist-id', data.id); setGistId(data.id); id = data.id
-      } else {
-        const r = await fetch(`https://api.github.com/gists/${id}`, {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: { 'diario-opciones.json': { content } } })
-        })
-        if (!r.ok) {
-          const data = await r.json().catch(() => ({}))
-          setSyncStatus(`❌ GitHub rechazó la actualización: ${data.message || r.status} — comprueba el token y el Gist ID`)
-          return
-        }
-      }
-      setSyncStatus(`☁️ Subido correctamente — ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} (${arr.length} ops)`)
-    } catch (e) { setSyncStatus(`⚠️ Error de red al sincronizar: ${e.message}`) }
-  }
-
   useEffect(() => {
-    const init = async () => {
+    const saved = LS.get('diario-ops-v1')
+    if (saved && saved.length > 0) {
+      setOps(saved)
+    } else {
       const seed = buildSeed()
-      const localRaw = LS.get('diario-ops-v1')
-      // Compatibilidad con el formato antiguo (array plano sin ts guardado localmente)
-      const local = Array.isArray(localRaw) ? { ops: localRaw, ts: 0 } : localRaw
-      // Intentar cargar desde Gist (puede tener datos de otro dispositivo)
-      const cloud = await loadFromGist()
-      // Gana quien tenga el timestamp más reciente, NO quien tenga más operaciones
-      let base = local?.ops || null
-      let baseTs = local?.ts || 0
-      if (cloud && Array.isArray(cloud.ops) && (cloud.ts || 0) > (local?.ts || 0)) {
-        base = cloud.ops
-        baseTs = cloud.ts
-        LS.set('diario-ops-v1', { ops: cloud.ops, ts: cloud.ts })
-        setSyncStatus(`☁️ Cargado desde Gist — versión más reciente (${cloud.ops.length} ops)`)
-      }
-      // Lista negra de fingerprints borrados a propósito: unimos la local con la de la nube
-      // (nunca resucitamos desde el seed algo borrado en CUALQUIERA de los dos PCs)
-      const deletedLocal = LS.get('diario-ops-deleted-v1') || []
-      const deletedCloud = (cloud && cloud.deleted) || []
-      const deleted = new Set([...deletedLocal, ...deletedCloud])
-      LS.set('diario-ops-deleted-v1', [...deleted])
-      if (!base || base.length === 0) {
-        const ts = Date.now()
-        const seedFiltered = seed.filter(o => {
-          const fp0 = `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-          return !deleted.has(fp0)
-        })
-        setOps(seedFiltered); setDataTs(ts); LS.set('diario-ops-v1', { ops: seedFiltered, ts }); return
-      }
-      const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-      // Quitamos de base cualquier op que esté en la lista negra (por si llegó vía Gist de otro PC)
-      const baseSinBorrados = base.filter(o => !deleted.has(fp(o)))
-      const baseSet = new Set(baseSinBorrados.map(fp))
-      const missing = seed.filter(o => !baseSet.has(fp(o)) && !deleted.has(fp(o)))
-      const merged = [...baseSinBorrados, ...missing].map(o => calcOp({ ...o }))
-      setOps(merged); setDataTs(baseTs)
-      LS.set('diario-ops-v1', { ops: merged, ts: baseTs })
+      setOps(seed)
+      LS.set('diario-ops-v1', seed)
     }
-    init()
   }, [])
 
-  // Tirar de la nube manualmente (o desde el polling automático) sin recargar la página
-  const fmtTs = ts => ts ? new Date(ts).toLocaleString('es-ES', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—'
-  const pullFromGist = async (silent) => {
-    const cloud = await loadFromGist()
-    if (!cloud) {
-      if (!silent) setSyncStatus('❌ No se pudo leer el Gist — revisa que el token y el Gist ID sean correctos')
-      return
-    }
-    // Fusionamos también la lista negra de borrados que traiga la nube
-    if (cloud.deleted && cloud.deleted.length) {
-      const deletedLocal = new Set(LS.get('diario-ops-deleted-v1') || [])
-      cloud.deleted.forEach(f => deletedLocal.add(f))
-      LS.set('diario-ops-deleted-v1', [...deletedLocal])
-    }
-    if (Array.isArray(cloud.ops) && (cloud.ts || 0) > dataTs) {
-      const deleted = new Set(LS.get('diario-ops-deleted-v1') || [])
-      const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-      const cleanOps = cloud.ops.filter(o => !deleted.has(fp(o)))
-      setOps(cleanOps); setDataTs(cloud.ts)
-      LS.set('diario-ops-v1', { ops: cleanOps, ts: cloud.ts })
-      setSyncStatus(`☁️ Actualizado: ${cleanOps.length} ops (nube: ${fmtTs(cloud.ts)} · antes tenías: ${fmtTs(dataTs)})`)
-    } else if (!silent) {
-      setSyncStatus(`✓ Ya tienes la última versión — local: ${fmtTs(dataTs)} (${ops.length} ops) · nube: ${fmtTs(cloud.ts)} (${cloud.ops?.length ?? '?'} ops)`)
-    }
-  }
-
-  // Comprobar cambios de otro PC cada 30s mientras la pestaña está abierta (si hay sync configurado)
+  // Tipo de cambio HKD→USD en vivo (fallback silencioso al valor guardado/por defecto si falla)
   useEffect(() => {
-    if (!githubToken || !gistId) return
-    const interval = setInterval(() => pullFromGist(true), 30000)
-    return () => clearInterval(interval)
-  }, [githubToken, gistId, dataTs])
+    setFxLoading(true)
+    fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=HKD')
+      .then(r => r.json())
+      .then(d => { const r = d?.rates?.HKD; if (r) { setFxRate(r); LS.set('fx-hkdusd', r) } })
+      .catch(() => {})
+      .finally(() => setFxLoading(false))
+  }, [])
 
-  const persist = arr => {
-    const ts = Date.now()
-    setOps(arr); setDataTs(ts); LS.set('diario-ops-v1', { ops: arr, ts })
-    // Sync a GitHub Gist con debounce de 3s para no saturar la API
-    if (syncTimer.current) clearTimeout(syncTimer.current)
-    syncTimer.current = setTimeout(() => syncToGist(arr, ts), 3000)
-  }
+  const persist = arr => { setOps(arr); LS.set('diario-ops-v1', arr) }
   const cuenta = tab === 'pablo' || tab === 'res-pablo' ? 'pablo' : 'maria'
 
   // Filtrar operaciones
@@ -702,63 +561,28 @@ export default function App() {
     else if (tab === 'maria' || tab === 'res-maria') { if (o.cuenta !== 'maria') return false }
     else return true
     if (filtro !== 'TODAS' && o.estado !== filtro) return false
-    if (mesFiltro !== 'TODOS' && o.estado === 'CERRADA' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
+    if (mesFiltro !== 'TODOS' && o.fecha_cierre?.slice(0,7) !== mesFiltro) return false
     if (busqueda && !o.ticker.toUpperCase().includes(busqueda.toUpperCase())) return false
-    if (soloNuevas && !lastBatch.has(o.id)) return false
     return true
   }).sort((a, b) => {
-    // Abiertas siempre primero (a menos que se ordene por un campo numérico)
-    const numCols = ['beneficio', 'rent_anual', 'prima', 'strike']
-    if (!numCols.includes(sortCol)) {
-      if (a.estado === 'ABIERTA' && b.estado !== 'ABIERTA') return -1
-      if (b.estado === 'ABIERTA' && a.estado !== 'ABIERTA') return 1
-    }
-    const aVal = a[sortCol], bVal = b[sortCol]
-    if (aVal == null && bVal == null) return 0
-    if (aVal == null) return 1
-    if (bVal == null) return -1
-    // Columnas de fecha: comparación directa de strings ISO (yyyy-mm-dd) — evita localeCompare numérico
-    const isDateCol = ['fecha_apertura', 'fecha_cierre', 'vencimiento'].includes(sortCol)
-    const cmp = isDateCol
-      ? (aVal > bVal ? 1 : aVal < bVal ? -1 : 0)
-      : typeof aVal === 'string' ? aVal.localeCompare(bVal) : aVal - bVal
-    return sortDir === 'asc' ? cmp : -cmp
+    if (a.estado === 'ABIERTA' && b.estado !== 'ABIERTA') return -1
+    if (b.estado === 'ABIERTA' && a.estado !== 'ABIERTA') return 1
+    return (b.fecha_apertura || '').localeCompare(a.fecha_apertura || '')
   })
 
   const saveOp = op => {
     const newOp = { ...op, id: op.id || uid() }
     const idx = ops.findIndex(o => o.id === newOp.id)
-    const arr = idx >= 0 ? ops.map((o, i) => i === idx ? calcOp(newOp) : o) : [...ops, calcOp(newOp)]
+    const arr = idx >= 0 ? ops.map((o, i) => i === idx ? newOp : o) : [...ops, newOp]
     persist(arr)
     setShowForm(false); setEditOp(null); setCloseOp(null)
-    // Avanzar cola de cierres pendientes (sin vincular del screenshot)
-    setPendingCierres(prev => {
-      const remaining = prev.slice(1)
-      if (remaining.length > 0) {
-        setEditOp(remaining[0])
-        setShowForm(true)
-        setAnalyzeMsg(`⚠️ Completar cierre ${remaining.length > 1 ? `(${remaining.length} pendientes)` : ''}: ${remaining[0].ticker} — ${remaining[0].estrategia}`)
-      }
-      return remaining
-    })
   }
 
-  const delOp = id => {
-    if (!confirm('¿Eliminar operación?')) return
-    const op = ops.find(o => o.id === id)
-    if (op) {
-      const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-      const deleted = new Set(LS.get('diario-ops-deleted-v1') || [])
-      deleted.add(fp(op))
-      LS.set('diario-ops-deleted-v1', [...deleted])
-    }
-    persist(ops.filter(o => o.id !== id))
-  }
+  const delOp = id => { if (confirm('¿Eliminar operación?')) persist(ops.filter(o => o.id !== id)) }
 
   // Analizar screenshot de IB
-  const analyzeIB = async (file, cuentaParam) => {
+  const analyzeIB = async file => {
     const key = apiKey || LS.get('ib-api-key')
-    const cuentaTarget = cuentaParam || cuenta
     if (!key) { setAnalyzeMsg('❌ Añade la API key en ⚙️'); return }
     setAnalyzing(true); setAnalyzeMsg('Analizando screenshot...')
     try {
@@ -767,291 +591,121 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-6', max_tokens: 4096, temperature: 0,
+          model: 'claude-sonnet-4-6', max_tokens: 2000, temperature: 0,
           messages: [{ role: 'user', content: [
-            { type: 'text', text: `INSTRUCCIONES CRÍTICAS — lee esto ANTES de ver la imagen.
-
-Para cada card en el screenshot de IB mobile, sigue OBLIGATORIAMENTE estos 2 pasos:
-
-PASO 1 — ¿Hay número con COLOR al final del card?
-  Busca si existe una cifra en VERDE (ej: $118.59, $16.43, $0.9) o ROJO (ej: -$80.75) al final de la card.
-  - SÍ existe color → es un CIERRE
-  - NO existe color (solo precios en gris) → es una APERTURA
-
-PASO 2 — Asigna la estrategia según la tabla:
-
-  Acción   | PASO1    | tipo     | Put  | Call
-  ---------|----------|----------|------|------
-  Vendido  | NO color | APERTURA | VPUT | VCALL
-  Comprado | NO color | APERTURA | CPUT | CCALL
-  Vendido  | SÍ color | CIERRE   | CPUT | CCALL
-  Comprado | SÍ color | CIERRE   | VPUT | VCALL
-  Expired  | verde    | CIERRE   | VPUT | VCALL  ← IB ya muestra PyG neto correcto, úsalo
-  Expired  | rojo     | CIERRE   | CPUT | CCALL  ← ídem
-  Assigned | $0       | CIERRE   | VPUT | VCALL  (assigned=true, beneficio=0, la app lo calcula)
-
-EJEMPLOS con sus resultados:
-- MA JUL17 465 Put / Comprado 1 / $200 / $118.59 VERDE → PASO1=SÍ → CIERRE VPUT, beneficio=118.59, precio_cierre=200
-- CMCSA JUL17 24 Put / Comprado 1 / $158 / $0.9 VERDE → PASO1=SÍ → CIERRE VPUT, beneficio=0.9, precio_cierre=158
-- PYPL Expired 1 / $0 / $16.43 VERDE → PASO1=SÍ → CIERRE VCALL, beneficio=16.43, precio_cierre=0, assigned=false
-- NU Assigned 1 / $0 → sin PyG → CIERRE VCALL, assigned=true, beneficio=0
-- BLK JUL17 910 Put / Vendido 1 / $900 / sin color → PASO1=NO → APERTURA VPUT, prima=900
-
-FECHAS: múltiples secciones posibles. Usa la fecha de cada sección para cada card.
-⚠️ Líneas como "June 26, 2026 €104.17" son TOTALES DIARIOS — ignóralas.
-
-SÍMBOLO: "JUL 17 '26 465 Put" → vencimiento=2026-07-17, strike=465, Put
-MONEDA: $=USD, €=EUR, £=GBP
-contratos = número tras Vendido/Comprado/Assigned/Expired
-
-VALORES:
-- CIERRE: beneficio=color final, precio_cierre=total gris, prima=0
-- APERTURA: prima=total gris, beneficio=0, precio_cierre=0
-- Número pequeño cursiva ($0.63, $1.05) = comisión → NO incluir
-
-Ahora analiza la imagen siguiente y devuelve SOLO JSON sin texto adicional ni backticks:
-[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","assigned":false,"notas":""}]` },
             { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data } },
-            { type: 'text', text: `Aplica exactamente las instrucciones anteriores a esta imagen.
+            { type: 'text', text: `Analiza este extracto de Interactive Brokers y extrae TODAS las operaciones con opciones que aparezcan.
 
-ESTRUCTURA DE CADA CARD:
-- Línea 1: TICKER + exchange
-- Línea 2: símbolo (ej: JUL 17 '26 85 Call, JUN 26 '26 127 Call)
-- Línea 3: acción + contratos (Vendido 1, Comprado 2, Assigned 1, Expired 1)
-- Derecha arriba: precio por acción en negrita
-- Derecha medio gris: TOTAL del contrato → precio_cierre o prima
-- Derecha pequeño cursiva: comisión IB → IGNORAR
-- Derecha CON COLOR (verde o rojo): PyG realizado → beneficio
+FORMATO WEB/ESCRITORIO (tabla con columnas):
+- Columna "Código": C = CIERRE, O = APERTURA
+- Columna "Símbolo": "TICKER DDMMMYY STRIKE P/C"
+- Columna "Productos": cash flow (negativo = pagaste para cerrar, positivo = cobraste al abrir)
+- Columna "Básico": prima original cobrada al abrir (solo aparece en cierres)
+- Columna "PyG realizadas": beneficio neto final
 
-TABLA DE CLASIFICACIÓN — aplica fila a fila sin excepciones:
+FORMATO MÓVIL — "Órdenes y transacciones" (cards con Vendido/Comprado):
+- Cabecera del card: "TICKER CÓDIGO_MERCADO" (p.ej. "ADSK ISE", "700 SEHK", "9988 SEHK") — el código de mercado indica la divisa (ver más abajo)
+- Línea de símbolo: "(NOMBRE opcional) MES DÍA 'AÑO STRIKE Put/Call" y a veces un número entre paréntesis justo después del strike/tipo, p.ej. "67.5 Put (200)" o "19.5 Put (2000)" — ESE PARÉNTESIS ES EL MULTIPLICADOR EXACTO del contrato (nº de acciones por contrato), úsalo tal cual si aparece
+- "Vendido N" / "Comprado N" = número de contratos operados en ese movimiento
+- "Vendido" + Put/Call + SIN PyG a la derecha → APERTURA posición corta (VPUT o VCALL)
+- "Comprado" + Put/Call + CON PyG → CIERRE posición corta
+- "Comprado" + Put/Call + SIN PyG → APERTURA posición larga (CPUT o CCALL)
+- "Vendido" + Put/Call + CON PyG → CIERRE posición larga
+- A la derecha de cada card hay dos importes: el de arriba en negrita es el PRECIO POR ACCIÓN (p.ej. "13.8 HKD" o "$4.6"), el de abajo más pequeño es el IMPORTE TOTAL de ese movimiento (p.ej. "1,380 HKD" o "$460"), y debajo en gris la comisión — la comisión NO es la prima ni el PyG, ignórala
+- La columna "PyG" (derecha del todo, junto a la hora) es el beneficio neto realizado — solo aparece con valor cuando hay CIERRE; en aperturas suele ir vacía o no aplica
 
-Acción   | P&L colorido | tipo     | Put  | Call
----------|--------------|----------|------|------
-Vendido  | NO           | APERTURA | VPUT | VCALL
-Comprado | NO           | APERTURA | CPUT | CCALL
-Vendido  | SÍ           | CIERRE   | CPUT | CCALL
-Comprado | SÍ           | CIERRE   | VPUT | VCALL
-Assigned | cualquiera   | CIERRE   | VPUT | VCALL  (assigned=true)
-Expired  | cualquiera   | CIERRE   | CPUT | CCALL  (assigned=true)
+PARSEAR SÍMBOLO:
+"MA JUL 17 '26 465 Put" → ticker=MA, vencimiento=2026-07-17, strike=465
+"BLK 17JUL26 910 P" → ticker=BLK, vencimiento=2026-07-17, strike=910
+"(TCH) NOV 27 '26 420 Put" → ticker=700 (o TCH si no hay código numérico), vencimiento=2026-11-27, strike=420
+Estrategia: apertura Put vendida=VPUT, Call vendida=VCALL, Put comprada=CPUT, Call comprada=CCALL
 
-EJEMPLOS CONCRETOS:
-- "ACN JUN 26 127 Call / Comprado 1 / $50 / $64.5 verde" → CIERRE, estrategia=VCALL, beneficio=64.5, precio_cierre=50
-- "MA JUL 17 465 Put / Comprado 1 / $210 / $263.31 verde" → CIERRE, estrategia=VPUT, beneficio=263.31, precio_cierre=210
-- "ACN JUN 26 128 Call / Vendido 1 / $31 / sin PyG" → APERTURA, estrategia=VCALL, prima=31
-- "ACN JUN 26 128 Call / Assigned 1 / $0" → CIERRE, estrategia=VCALL, beneficio=0
-- "BLK JUL 17 910 Put / Vendido 1 / $900 / sin PyG" → APERTURA, estrategia=VPUT, prima=900
-- "CMCSA JUN 26 25 Put / Comprado 1 / $206 / -$80.75 rojo" → CIERRE, estrategia=VPUT, beneficio=-80.75, precio_cierre=206
-- "GIS JUL 17 35 Call / Comprado 1 / $295 / -$230.04 rojo" → CIERRE, estrategia=VCALL, beneficio=-230.04, precio_cierre=295
-- "META DEC 18 570 Call / Vendido 1 / $9500 / $977.99 verde" → CIERRE, estrategia=CCALL, beneficio=977.99, precio_cierre=9500
+DIVISA:
+- Código de mercado SEHK (Hong Kong) o importes mostrados en "HKD" → divisa="HKD"
+- Código de mercado ISE, CBOE, ARCA, NASDAQ, NYSE, SMART o importes en "$"/"USD" → divisa="USD"
 
-FECHAS: puede haber varias secciones de fechas distintas. Cada operación usa la fecha de su sección.
-⚠️ Las líneas "June 27, 2026 $64.5" son TOTALES DIARIOS — ignóralas completamente.
+MULTIPLICADOR (crítico, NO asumas un valor fijo — calcúlalo o léelo):
+1. Si hay un número entre paréntesis junto al strike (p.ej. "(200)", "(2000)", "(500)") → ese es el multiplicador por contrato, úsalo directamente
+2. Si no aparece el paréntesis, CALCÚLALO con los datos del propio card: multiplicador_total_del_movimiento = importe_total ÷ precio_por_acción; luego multiplicador_por_contrato = multiplicador_total_del_movimiento ÷ nº_contratos ("Vendido N"/"Comprado N")
+   Ejemplo: "700 SEHK, Vendido 1, precio 13.8 HKD, total 1,380 HKD" → 1380 ÷ 13.8 = 100 acciones ÷ 1 contrato = multiplicador 100
+   Ejemplo: "2020 SEHK, 67.5 Put (200), Vendido 4, precio 1.02 HKD, total 816 HKD" → paréntesis ya dice 200 (verificación: 816 ÷ 1.02 = 800 acciones ÷ 4 contratos = 200 ✓)
+3. Si ninguno de los dos es calculable, usa 100 como último recurso
+- El multiplicador varía MUCHO entre valores de Hong Kong (100, 200, 500, 2000...) — nunca asumas 50 ni ningún valor fijo para HKD
 
-SÍMBOLO: "JUL 17 '26 85 Call" → vencimiento=2026-07-17, strike=85
+APERTURAS SIN PyG:
+- Las aperturas NO tienen PyG, eso es completamente normal
+- "Vendido" sin PyG = apertura válida → tipo=APERTURA, estado=ABIERTA, beneficio=0
+- NO ignorar operaciones por no tener PyG
 
-MONEDA: $=USD, €=EUR, £=GBP
-contratos = número tras Vendido/Comprado/Assigned/Expired
+Devuelve SOLO un array JSON con TODAS las operaciones encontradas, sin backticks:
+[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT o VCALL o CPUT o CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"divisa":"USD o HKD","multiplicador":100,"prima":0,"precio_cierre":0,"beneficio":0,"notas":""}]
 
-VALORES:
-- CIERRE: beneficio=P&L colorido (con signo), precio_cierre=total gris, prima=0
-- APERTURA: prima=total gris, beneficio=0, precio_cierre=0
-- Número pequeño cursiva = comisiones → NO incluir
-
-Devuelve SOLO un array JSON sin texto adicional ni backticks:
-[{"tipo":"APERTURA o CIERRE","estrategia":"VPUT/VCALL/CPUT/CCALL","ticker":"","fecha":"YYYY-MM-DD","vencimiento":"YYYY-MM-DD","strike":0,"contratos":1,"prima":0,"precio_cierre":0,"beneficio":0,"moneda":"USD","assigned":false,"notas":""}]
-
-assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=false y pon el beneficio verde de IB en el campo beneficio.` }
+- prima = importe total del movimiento (precio_por_acción × multiplicador × nº_contratos) en la divisa detectada, al abrir
+- precio_cierre = importe total del movimiento en la divisa detectada al cerrar (0 si apertura)
+- beneficio = PyG neto en la divisa detectada (0 si apertura, puede ser negativo si pérdida)` }
           ]}]
         })
       })
       const d = await resp.json()
       if (d.error) throw new Error(d.error.message)
       const raw = d.content?.[0]?.text || ''
-      // Parser robusto: elimina markdown, encuentra el JSON válido por conteo de llaves
-      const cleaned = raw.replace(/```(?:json)?\n?/g, '').trim()
-      function extractJSON(text) {
-        try { return JSON.parse(text) } catch {}
-        for (const startChar of ['[', '{']) {
-          const start = text.indexOf(startChar)
-          if (start === -1) continue
-          let depth = 0, inStr = false, esc = false
-          for (let i = start; i < text.length; i++) {
-            const ch = text[i]
-            if (esc) { esc = false; continue }
-            if (ch === '\\' && inStr) { esc = true; continue }
-            if (ch === '"') { inStr = !inStr; continue }
-            if (inStr) continue
-            if (ch === '[' || ch === '{') depth++
-            if (ch === ']' || ch === '}') { depth--; if (depth === 0) { try { const r = JSON.parse(text.slice(start, i + 1)); return r } catch {} } }
-          }
-        }
-        throw new Error('No se encontró JSON válido en la respuesta')
-      }
-      const extracted = extractJSON(cleaned)
-      const resultados = Array.isArray(extracted) ? extracted : [extracted]
-
-      // Conversión de moneda: EUR y GBP → USD
-      const rates = { USD: 1, EUR: eurUsd, GBP: gbpUsd }
-      let convertidas = 0
-      resultados.forEach(r => {
-        const rate = rates[r.moneda] || 1
-        if (r.moneda && r.moneda !== 'USD' && rate !== 1) {
-          const conv = v => v ? Math.round(v * rate * 100) / 100 : v
-          r.prima = conv(r.prima); r.precio_cierre = conv(r.precio_cierre); r.beneficio = conv(r.beneficio)
-          convertidas++
-        }
-      })
+      // Intentar parsear como array primero, luego como objeto único
+      const matchArr = raw.match(/\[[\s\S]*\]/)
+      const matchObj = raw.match(/\{[\s\S]*\}/)
+      if (!matchArr && !matchObj) throw new Error('No se encontró JSON en la respuesta')
+      const parsed = matchArr ? JSON.parse(matchArr[0]) : [JSON.parse(matchObj[0])]
+      const resultados = Array.isArray(parsed) ? parsed : [parsed]
 
       // Procesar cada operación extraída
-      const aperturas = [], cierresVinculados = [], cierresSinVincular = [], actualizaciones = []
+      const aperturas = [], cierresVinculados = [], cierresSinVincular = []
       resultados.forEach(r => {
         if (!r.ticker) return
-        if (r.tipo === 'CIERRE' && r.ticker && r.vencimiento) {
-          const matchKey = o =>
-            o.cuenta === cuentaTarget &&
-            normTicker(o.ticker) === normTicker(r.ticker) &&
-            Number(o.strike) === Number(r.strike) &&
-            o.vencimiento === r.vencimiento
-          const op_abierta = ops.find(o => matchKey(o) && o.estado === 'ABIERTA')
-          const op_yacerrada = !op_abierta && ops.find(o => matchKey(o) && o.estado === 'CERRADA')
+        if (r.tipo === 'CIERRE' && r.ticker && r.strike && r.vencimiento) {
+          const op_abierta = ops.find(o =>
+            o.cuenta === cuenta && o.estado === 'ABIERTA' &&
+            o.ticker.toUpperCase() === r.ticker.toUpperCase() &&
+            o.strike === r.strike && o.vencimiento === r.vencimiento
+          )
           if (op_abierta) {
-            cierresVinculados.push({
-              ...op_abierta,
-              fecha_cierre: r.fecha,
-              precio_cierre: (r.assigned && !r.beneficio) ? 0 : r.precio_cierre,
-              beneficio: r.assigned && !r.beneficio
-                ? parseFloat(((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2))
-                : r.beneficio,
-              estado: 'CERRADA',
-              notas: (r.assigned && !r.beneficio)
-                ? `Adjudicación — prima ${op_abierta.prima}$ - comisión ${op_abierta.comision || 0}$ = ${((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2)}$`
-                : (op_abierta.notas || '')
-            })
-          } else if (op_yacerrada) {
-            // Ya cerrada — distinguir dos casos:
-            // A) Misma fecha de cierre + distinto beneficio → corrección de la misma op
-            // B) Fecha de cierre diferente → es una operación NUEVA con mismos parámetros (abrió y cerró rápido)
-            const beneficioDetectado = (r.assigned && !r.beneficio) ? null : r.beneficio
-            const mismaFecha = op_yacerrada.fecha_cierre === r.fecha
-            const difiere = beneficioDetectado != null &&
-              Math.abs((op_yacerrada.beneficio || 0) - beneficioDetectado) > 0.01
-
-            if (mismaFecha && difiere) {
-              // Caso A: misma fecha, beneficio incorrecto → corregir
-              actualizaciones.push({
-                ...op_yacerrada,
-                beneficio: beneficioDetectado,
-                precio_cierre: r.precio_cierre || op_yacerrada.precio_cierre,
-                notas: `Beneficio corregido desde IB: ${beneficioDetectado}$ (antes: ${op_yacerrada.beneficio}$)`
-              })
-            } else if (!mismaFecha && beneficioDetectado != null) {
-              // Caso B: fecha diferente → operación nueva cerrada (abrió y cerró rápido, sin apertura en BD)
-              cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA',
-                estrategia: r.estrategia, ticker: r.ticker, fecha_apertura: '',
-                vencimiento: r.vencimiento, strike: r.strike, prima: 0,
-                objetivo_pct: 45, contratos: r.contratos || 1, fecha_cierre: r.fecha,
-                precio_cierre: r.precio_cierre, beneficio: beneficioDetectado,
-                notas: `Nueva op (mismos parámetros que op anterior). ${r.notas || ''}`.trim() })
-            } else {
-              // Misma fecha y mismo beneficio → ya estaba bien, ignorar
-              cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
-            }
+            cierresVinculados.push({ ...op_abierta, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, estado: 'CERRADA' })
           } else {
-            cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
-              fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
-              objetivo_pct: 45, contratos: r.contratos || 1, fecha_cierre: r.fecha,
-              precio_cierre: r.assigned ? 0 : r.precio_cierre,
-              beneficio: r.assigned ? (r.prima || null) : r.beneficio,
-              notas: r.assigned ? 'Adjudicación — introduce la prima original cobrada como beneficio' : (r.notas || '') })
+            cierresSinVincular.push({ id: uid(), cuenta, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
+              fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike,
+              divisa: r.divisa || 'USD', multiplicador: r.multiplicador || multDefault(),
+              prima: r.prima || 0,
+              objetivo_pct: 45, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio, notas: r.notas })
           }
         } else {
-          aperturas.push(calcOp({ id: uid(), cuenta: cuentaTarget, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
-            fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima,
-            objetivo_pct: 45, contratos: r.contratos || 1, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
+          aperturas.push(calcOp({ id: uid(), cuenta, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
+            fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike,
+            divisa: r.divisa || 'USD', multiplicador: r.multiplicador || multDefault(),
+            prima: r.prima,
+            objetivo_pct: 45, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
         }
       })
-      const convMsg = convertidas > 0 ? ` (${convertidas} op${convertidas > 1 ? 's' : ''} convertida${convertidas > 1 ? 's' : ''} de ${resultados.find(r => r.moneda && r.moneda !== 'USD')?.moneda || '?'} a USD)` : ''
 
-      // ── Detección de duplicados ──────────────────────────────────
-      // Fingerprint: misma cuenta+estrategia+ticker+fecha_apertura+vencimiento+strike
-      const fpOp = o => `${o.cuenta}|${o.estrategia}|${normTicker(o.ticker)}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-      const existingFps = new Set(ops.map(fpOp))
-      const aperturasSinDup = aperturas.filter(a => !existingFps.has(fpOp(a)))
-      const dupCount = aperturas.length - aperturasSinDup.length
-      const dupMsg = dupCount > 0 ? ` (${dupCount} duplicada${dupCount > 1 ? 's' : ''} ignorada${dupCount > 1 ? 's' : ''})` : ''
-
-      // Cierres vinculados: solo aplicar si la op sigue ABIERTA (evita re-cerrar)
-      const cierresVinculadosValidos = cierresVinculados.filter(c => {
-        const orig = ops.find(o => o.id === c.id)
-        return orig && orig.estado === 'ABIERTA'
-      })
-      const dupCierres = cierresVinculados.length - cierresVinculadosValidos.length
-
-      let currentOps = ops
-      const batchIds = new Set()
-
-      // Guardar aperturas (sin duplicados)
-      if (aperturasSinDup.length > 0) {
-        aperturasSinDup.forEach(a => batchIds.add(a.id))
-        currentOps = [...currentOps, ...aperturasSinDup]
-        persist(currentOps)
-        setAnalyzeMsg(`✅ ${aperturasSinDup.length} apertura(s) [${cuentaTarget}]: ${aperturasSinDup.map(a => a.ticker).join(', ')}${dupMsg}${convMsg}`)
-      } else if (dupCount > 0) {
-        setAnalyzeMsg(`ℹ️ ${dupCount} apertura(s) ya existían — no se duplicaron`)
+      // Guardar aperturas directamente
+      if (aperturas.length > 0) {
+        persist([...ops, ...aperturas])
+        setAnalyzeMsg(`✅ ${aperturas.length} apertura(s) registrada(s): ${aperturas.map(a => a.ticker).join(', ')}`)
       }
-
-      // Aplicar cierres vinculados (de ABIERTAS)
-      if (cierresVinculadosValidos.length > 0) {
-        cierresVinculadosValidos.forEach(c => batchIds.add(c.id))
-        currentOps = currentOps.map(o => {
-          const c = cierresVinculadosValidos.find(c => c.id === o.id)
+      // Aplicar cierres vinculados directamente
+      if (cierresVinculados.length > 0) {
+        const updated = ops.map(o => {
+          const c = cierresVinculados.find(c => c.id === o.id)
           return c ? calcOp(c) : o
         })
-        persist(currentOps)
-        let msg = `✅ ${cierresVinculadosValidos.length} cierre(s) [${cuentaTarget}]: ${cierresVinculadosValidos.map(c => c.ticker).join(', ')}`
-        if (dupCierres > 0) msg += ` (${dupCierres} ya cerradas sin cambios)`
-        msg += convMsg
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + msg)
+        persist(updated)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `✅ ${cierresVinculados.length} cierre(s) vinculado(s): ${cierresVinculados.map(c => c.ticker).join(', ')}`)
       }
-
-      // Aplicar correcciones de beneficio (ya-cerradas con beneficio incorrecto)
-      if (actualizaciones.length > 0) {
-        actualizaciones.forEach(a => batchIds.add(a.id))
-        currentOps = currentOps.map(o => {
-          const a = actualizaciones.find(a => a.id === o.id)
-          return a ? calcOp(a) : o
-        })
-        persist(currentOps)
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') +
-          `🔄 ${actualizaciones.length} beneficio(s) corregido(s) [${cuentaTarget}]: ${actualizaciones.map(a => a.ticker).join(', ')}`)
-      }
-
-      // Actualizar el último batch para resaltado
-      if (batchIds.size > 0) {
-        setLastBatch(batchIds)
-        setSoloNuevas(true) // auto-filtrar a las nuevas
-      }
-
-      // Cierres sin vincular → separar los ya cerrados (solo avisar) de los nuevos (formulario)
-      const yacerradas = cierresSinVincular.filter(c => c._yacerrada)
-      const realesNuevos = cierresSinVincular.filter(c => !c._yacerrada)
-
-      if (yacerradas.length > 0) {
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') +
-          `ℹ️ ${yacerradas.length} ya cerrada(s) — se ignoran: ${yacerradas.map(c => c.ticker).join(', ')}`)
-      }
-
-      if (realesNuevos.length > 0) {
-        setPendingCierres(realesNuevos)
-        setEditOp(realesNuevos[0])
+      // Cierres sin vincular → abrir formulario para el primero
+      if (cierresSinVincular.length > 0) {
+        setEditOp(cierresSinVincular[0])
         setShowForm(true)
-        const pendMsg = realesNuevos.length > 1
-          ? `⚠️ ${realesNuevos.length} cierres sin posición abierta [${cuentaTarget}] — completar uno a uno: ${realesNuevos.map(c => c.ticker).join(', ')}${convMsg}`
-          : `⚠️ Cierre sin posición abierta [${cuentaTarget}]: ${realesNuevos[0].ticker} — completa los datos${convMsg}`
-        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + pendMsg)
+        setAnalyzeMsg(prev => (prev ? prev + ' · ' : '') + `⚠️ ${cierresSinVincular.length} cierre(s) sin posición abierta: ${cierresSinVincular.map(c => c.ticker).join(', ')}`)
       }
-      if (aperturasSinDup.length === 0 && cierresVinculadosValidos.length === 0 && realesNuevos.length === 0 && dupCount === 0 && yacerradas.length === 0) {
-        setAnalyzeMsg('⚠️ No se encontraron operaciones nuevas en la imagen')
+      if (aperturas.length === 0 && cierresVinculados.length === 0 && cierresSinVincular.length === 0) {
+        setAnalyzeMsg('⚠️ No se encontraron operaciones en la imagen')
       }
     } catch (e) { setAnalyzeMsg('❌ ' + e.message) }
     finally { setAnalyzing(false) }
@@ -1066,14 +720,15 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
   // Stats rápidas
   const abiertas = ops.filter(o => o.cuenta === cuenta && o.estado === 'ABIERTA')
   const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA')
-  const benefTotal = cerradas.reduce((s, o) => s + (o.beneficio || 0), 0)
+  // P&L Total: sumatorio final SIEMPRE en USD (las operaciones en HKD se convierten con fxRate)
+  const benefTotalUSD = cerradas.reduce((s, o) => s + (toUSD(o.beneficio, o.divisa, fxRate) || 0), 0)
+  const hayHKD = cerradas.some(o => o.divisa === 'HKD')
 
   const NAV = [
     { id: 'pablo', label: '📋 Pablo', group: 'P', color: C.pablo },
     { id: 'maria', label: '📋 María', group: 'M', color: C.maria },
     { id: 'res-pablo', label: '📊 Resultados Pablo', group: 'P', color: C.pablo },
     { id: 'res-maria', label: '📊 Resultados María', group: 'M', color: C.maria },
-    { id: 'comparador', label: '🧮 Comparador', group: 'C', color: C.gold },
   ]
 
   return (
@@ -1090,7 +745,9 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
           {[
             { l: 'Abiertas', v: abiertas.length, c: C.grn },
             { l: 'Cerradas', v: cerradas.length, c: C.dim },
-            { l: 'P&L Total', v: `${benefTotal >= 0 ? '+' : ''}${fmtNum(benefTotal)}$`, c: benefTotal >= 0 ? C.grn : C.red }
+            { l: hayHKD ? `P&L Total (USD · TC ${fxRate})` : 'P&L Total',
+              v: `${benefTotalUSD >= 0 ? '+' : ''}${fmtNum(benefTotalUSD)}$`,
+              c: benefTotalUSD >= 0 ? C.grn : C.red }
           ].map(({ l, v, c }) => (
             <div key={l} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 9, color: C.dim }}>{l}</div>
@@ -1103,122 +760,27 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
 
       {/* CONFIG */}
       {showCfg && (
-        <>
         <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '12px 20px', display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 300, maxWidth: 420 }}>
+          <div style={{ flex: 1, minWidth: 260, maxWidth: 420 }}>
             <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>🔑 Anthropic API Key</label>
             <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
               placeholder="sk-ant-api03-..."
               style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
           </div>
-          <div>
-            <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>EUR/USD</label>
-            <input type="number" step="0.01" value={eurUsd} onChange={e => setEurUsd(parseFloat(e.target.value) || 1.09)}
-              style={{ width: 80, background: C.bg, border: `1px solid ${C.brd}`, color: C.gold, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none' }} />
+          <div style={{ width: 160 }}>
+            <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>
+              💱 TC HKD→USD {fxLoading ? '(actualizando…)' : ''}
+            </label>
+            <input type="number" step="0.001" value={fxRate}
+              onChange={e => setFxRate(+e.target.value || fxRate)}
+              style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
           </div>
-          <div>
-            <label style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>GBP/USD</label>
-            <input type="number" step="0.01" value={gbpUsd} onChange={e => setGbpUsd(parseFloat(e.target.value) || 1.27)}
-              style={{ width: 80, background: C.bg, border: `1px solid ${C.brd}`, color: C.gold, borderRadius: 6, padding: '8px 10px', fontSize: 12, outline: 'none' }} />
-          </div>
-          <button onClick={() => { LS.set('ib-api-key', apiKey); LS.set('eur-usd', eurUsd); LS.set('gbp-usd', gbpUsd); setShowCfg(false) }}
+          <button onClick={() => { LS.set('ib-api-key', apiKey); LS.set('fx-hkdusd', fxRate); setShowCfg(false) }}
             style={{ padding: '8px 16px', background: C.acc, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
             💾 Guardar
           </button>
+          <span style={{ fontSize: 11, color: C.mut }}>Key solo en este navegador · TC editable si el auto-fetch falla (1 USD = {fxRate} HKD)</span>
         </div>
-        {/* Segunda fila: gestión de datos */}
-        <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '10px 20px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: C.dim, fontWeight: 700, textTransform: 'uppercase', marginRight: 4 }}>📦 Datos:</span>
-
-          {/* Exportar backup */}
-          <button onClick={() => {
-            const blob = new Blob([JSON.stringify(ops, null, 2)], { type: 'application/json' })
-            const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
-            a.download = `diario-opciones-backup-${new Date().toISOString().slice(0,10)}.json`
-            a.click(); URL.revokeObjectURL(a.href)
-          }} style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.grn}`, color: C.grn, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            ⬇ Exportar backup
-          </button>
-
-          {/* Importar backup */}
-          <label style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.acc}`, color: C.acc, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            ⬆ Importar backup
-            <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => {
-              const f = e.target.files[0]; if (!f) return
-              const r = new FileReader()
-              r.onload = ev => {
-                try {
-                  const data = JSON.parse(ev.target.result)
-                  if (!Array.isArray(data)) { alert('JSON inválido: debe ser un array'); return }
-                  if (confirm(`¿Restaurar ${data.length} operaciones? Esto sobreescribirá los datos actuales.`)) {
-                    persist(data.map(o => calcOp({ ...o })))
-                    setShowCfg(false)
-                    alert(`✅ ${data.length} operaciones restauradas`)
-                  }
-                } catch { alert('Error al leer el archivo JSON') }
-              }
-              r.readAsText(f); e.target.value = ''
-            }} />
-          </label>
-
-          {/* Purgar duplicados */}
-          <button onClick={() => {
-            const fp = o => `${o.cuenta}|${o.estrategia}|${o.ticker}|${o.fecha_apertura}|${o.vencimiento}|${o.strike}`
-            const seen = new Set(); const limpias = []
-            ops.forEach(o => { const k = fp(o); if (!seen.has(k)) { seen.add(k); limpias.push(o) } })
-            const removed = ops.length - limpias.length
-            if (removed === 0) { alert('✅ No hay duplicados'); return }
-            if (confirm(`Eliminar ${removed} operación(es) duplicada(s)?`)) { persist(limpias); alert(`✅ ${removed} duplicada(s) eliminada(s)`) }
-          }} style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.gold}`, color: C.gold, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            🧹 Purgar duplicados
-          </button>
-
-          {/* Reset al seed */}
-          <button onClick={() => {
-            if (confirm('⚠️ ¿Reset completo al seed? Se perderán todas las operaciones añadidas manualmente. Exporta un backup primero si lo necesitas.')) {
-              const seed = buildSeed()
-              LS.set('diario-ops-deleted-v1', [])
-              persist(seed)
-              setShowCfg(false)
-              alert(`✅ Reset al seed: ${seed.length} operaciones`)
-            }
-          }} style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            🗑 Reset al seed
-          </button>
-
-          <span style={{ fontSize: 10, color: C.dim, marginLeft: 4 }}>{ops.length} ops en memoria</span>
-        </div>
-        {/* Tercera fila: sync entre dispositivos */}
-        <div style={{ background: '#060c18', borderBottom: `1px solid ${C.brd}`, padding: '10px 20px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: C.acc, fontWeight: 700, textTransform: 'uppercase', marginRight: 4 }}>☁️ Sync entre PCs:</span>
-          <div style={{ minWidth: 260, maxWidth: 340 }}>
-            <input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)}
-              placeholder="GitHub Personal Access Token (scope: gist)"
-              style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 6, padding: '6px 10px', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
-          </div>
-          <div style={{ minWidth: 180, maxWidth: 220 }}>
-            <input value={gistId} onChange={e => setGistId(e.target.value.trim())}
-              placeholder="Gist ID (pégalo del otro PC)"
-              style={{ width: '100%', background: C.bg, border: `1px solid ${C.brd}`, color: C.grn, borderRadius: 6, padding: '6px 10px', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
-          </div>
-          <span style={{ fontSize: 11, color: syncStatus.includes('⚠️') || syncStatus.includes('❌') ? '#f97316' : C.grn }}>{syncStatus}</span>
-          <button onClick={() => { LS.set('gh-token', githubToken); LS.set('gist-id', gistId); syncToGist(ops, dataTs) }}
-            style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.acc}`, color: C.acc, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            {gistId ? '☁️ Subir esta versión' : '☁️ Conectar'}
-          </button>
-          <button onClick={() => { LS.set('gh-token', githubToken); LS.set('gist-id', gistId); pullFromGist(false) }}
-            style={{ padding: '6px 12px', background: C.surf2, border: `1px solid ${C.grn}`, color: C.grn, borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-            🔄 Traer última versión
-          </button>
-          {gistId && <a href={`https://gist.github.com/${gistId}`} target="_blank" rel="noreferrer"
-            style={{ fontSize: 10, color: C.acc }}>👁 Ver Gist en GitHub</a>}
-          <a href="https://github.com/settings/tokens/new?scopes=gist&description=DiarioOpciones" target="_blank"
-            style={{ fontSize: 10, color: C.dim }}>¿Cómo obtener el token?</a>
-          <span style={{ fontSize: 10, color: C.dim, width: '100%' }}>
-            Datos locales de este PC: {ops.length} ops · última modificación {fmtTs(dataTs)}. Mismo token + mismo Gist ID en ambos PCs = sync automático cada 30s. Copia el Gist ID de un PC y pégalo en el otro para enlazarlos.
-          </span>
-        </div>
-        </>
       )}
 
       {/* TABS */}
@@ -1238,11 +800,8 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
 
         {/* RESULTADOS */}
         {(tab === 'res-pablo' || tab === 'res-maria') && (
-          <ResultsTab ops={ops} cuenta={tab === 'res-pablo' ? 'pablo' : 'maria'} />
+          <ResultsTab ops={ops} cuenta={tab === 'res-pablo' ? 'pablo' : 'maria'} fxRate={fxRate} />
         )}
-
-        {/* COMPARADOR */}
-        {tab === 'comparador' && <ComparadorOpciones />}
 
         {/* OPERACIONES */}
         {(tab === 'pablo' || tab === 'maria') && (
@@ -1254,20 +813,13 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
                 + Nueva operación
               </button>
 
-              {/* IB Screenshot con selector de cuenta */}
-              <div style={{ display: 'flex', gap: 0, alignItems: 'center', border: `1px solid ${C.brd}`, borderRadius: 8, overflow: 'hidden' }}>
-                <select value={ibCuenta} onChange={e => setIbCuenta(e.target.value)}
-                  style={{ background: C.surf2, border: 'none', borderRight: `1px solid ${C.brd}`, color: ibCuenta === 'pablo' ? C.pablo : C.maria, padding: '8px 10px', fontSize: 12, outline: 'none', cursor: 'pointer', fontWeight: 700 }}>
-                  <option value="pablo">👤 Pablo</option>
-                  <option value="maria">👤 María</option>
-                </select>
-                <button onClick={() => fileRef.current?.click()} disabled={analyzing}
-                  style={{ padding: '8px 14px', background: C.surf2, border: 'none', color: C.dim, cursor: 'pointer', fontSize: 12 }}>
-                  {analyzing ? '⏳ Analizando...' : '📸 Subir screenshot IB'}
-                </button>
-              </div>
+              {/* IB Screenshot */}
+              <button onClick={() => fileRef.current?.click()} disabled={analyzing}
+                style={{ padding: '8px 16px', background: C.surf2, border: `1px solid ${C.brd}`, color: C.dim, borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>
+                {analyzing ? '⏳ Analizando...' : '📸 Subir screenshot IB'}
+              </button>
               <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
-                onChange={e => { const f = e.target.files[0]; if (f) { analyzeIB(f, ibCuenta); e.target.value = '' } }} />
+                onChange={e => { const f = e.target.files[0]; if (f) analyzeIB(f) }} />
 
               {/* Filtros estado */}
               {['TODAS', 'ABIERTA', 'CERRADA'].map(f => (
@@ -1292,17 +844,6 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
               <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar ticker..."
                 style={{ background: C.surf, border: `1px solid ${C.brd}`, color: C.txt, borderRadius: 20, padding: '6px 14px', fontSize: 12, outline: 'none', width: 140 }} />
 
-              {/* Filtro últimas operaciones del screenshot */}
-              {lastBatch.size > 0 && (
-                <button onClick={() => setSoloNuevas(v => !v)}
-                  style={{ padding: '6px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                    border: `1px solid ${soloNuevas ? C.grn : C.brd}`,
-                    background: soloNuevas ? C.grn + '22' : 'transparent',
-                    color: soloNuevas ? C.grn : C.dim }}>
-                  {soloNuevas ? `📸 Nuevas (${lastBatch.size}) ✓` : `📸 Ver nuevas (${lastBatch.size})`}
-                </button>
-              )}
-
               <span style={{ fontSize: 11, color: C.dim }}>{opsTab.length} operaciones</span>
             </div>
 
@@ -1318,39 +859,11 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
             {/* Formulario nueva/editar */}
             {showForm && (
               <div style={{ marginBottom: 16 }}>
-                {pendingCierres.length > 0 && (
-                  <div style={{ background: C.gold + '18', border: `1px solid ${C.gold}40`, borderRadius: 8, padding: '8px 14px', marginBottom: 8, fontSize: 12, color: C.gold, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>📋 Cierre sin vincular {pendingCierres.length > 1 ? `${pendingCierres.indexOf(editOp) + 1} de ${pendingCierres.length}` : ''}: <strong>{editOp?.ticker}</strong> — Completa los datos y guarda; se irán mostrando automáticamente</span>
-                    <button onClick={() => { setPendingCierres([]); setShowForm(false); setEditOp(null) }}
-                      style={{ background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 11 }}>✕ Omitir todos</button>
-                  </div>
-                )}
                 <OpForm
-                  key={editOp?.id || 'new'}
                   initial={editOp || { ...EMPTY, cuenta }}
-                  titulo={pendingCierres.length > 0 && editOp
-                    ? `⚠️ Cierre sin vincular${pendingCierres.length > 1 ? ` (${pendingCierres.indexOf(editOp) + 1}/${pendingCierres.length})` : ''}: ${editOp.ticker}`
-                    : editOp?.id ? '✏️ Editar operación' : '+ Nueva operación'}
+                  titulo={editOp?.id ? '✏️ Editar operación' : '+ Nueva operación'}
                   onSave={saveOp}
-                  onCancel={() => {
-                    if (pendingCierres.length > 0) {
-                      // En modo cola: omitir este y pasar al siguiente
-                      setPendingCierres(prev => {
-                        const remaining = prev.slice(1)
-                        if (remaining.length > 0) {
-                          setEditOp(remaining[0])
-                          setShowForm(true)
-                          setAnalyzeMsg(`⚠️ Omitido. Siguiente: ${remaining[0].ticker}${remaining.length > 1 ? ` (${remaining.length} pendientes)` : ''}`)
-                        } else {
-                          setShowForm(false); setEditOp(null)
-                          setAnalyzeMsg('ℹ️ Todos los cierres procesados')
-                        }
-                        return remaining
-                      })
-                    } else {
-                      setShowForm(false); setEditOp(null)
-                    }
-                  }} />
+                  onCancel={() => { setShowForm(false); setEditOp(null) }} />
               </div>
             )}
 
@@ -1361,7 +874,6 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
                   ✅ Cerrando {closeOp.estrategia} {closeOp.ticker} {closeOp.strike} — operación vinculada automáticamente
                 </div>
                 <OpForm
-                  key={closeOp?.id || 'close'}
                   initial={closeOp}
                   titulo="✅ Cerrar operación"
                   onSave={saveOp}
@@ -1373,33 +885,8 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
             <div style={{ background: C.surf, borderRadius: '10px 10px 0 0', border: `1px solid ${C.brd}`, borderBottom: 'none' }}>
               <div style={{ display: 'grid', gridTemplateColumns: GRID,
                 gap: 8, padding: '8px 12px', fontSize: 9, color: C.dim, fontWeight: 700, textTransform: 'uppercase' }}>
-                {[
-                  { h: 'Apertura', col: 'fecha_apertura' },
-                  { h: 'Ticker', col: null },
-                  { h: 'Estrategia', col: null },
-                  { h: 'Vencto.', col: 'vencimiento' },
-                  { h: 'Strike', col: 'strike' },
-                  { h: 'Prima', col: 'prima' },
-                  { h: 'Obj.cierre', col: null },
-                  { h: 'Beneficio', col: 'beneficio' },
-                  { h: 'Rent.Anual', col: 'rent_anual' },
-                  { h: 'F.Cierre', col: 'fecha_cierre' },
-                  { h: 'Vence/Mes', col: 'vencimiento' },
-                  { h: 'Estado', col: null },
-                  { h: '', col: null }
-                ].map(({ h, col }) => (
-                  <span key={h} onClick={() => {
-                    if (!col) return
-                    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-                    else { setSortCol(col); setSortDir('desc') }
-                  }} style={{
-                    textAlign: ['Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes'].includes(h) ? 'center' : 'left',
-                    cursor: col ? 'pointer' : 'default',
-                    color: sortCol === col ? C.gold : C.dim,
-                    userSelect: 'none'
-                  }}>
-                    {h}{col && sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : col ? ' ⇅' : ''}
-                  </span>
+                {['Apertura','Ticker','Estrategia','Vencto.','Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes','Estado',''].map(h => (
+                  <span key={h} style={{ textAlign: ['Strike','Prima','Obj.cierre','Beneficio','Rent.Anual','Vence/Mes'].includes(h) ? 'center' : 'left' }}>{h}</span>
                 ))}
               </div>
             </div>
@@ -1414,7 +901,6 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
               )}
               {opsTab.map(op => (
                 <OpRow key={op.id} op={op}
-                  isNew={lastBatch.has(op.id)}
                   onEdit={op => { setEditOp(op); setShowForm(true); setCloseOp(null) }}
                   onDelete={delOp}
                   onClose={op => { setCloseOp({ ...op, estado: 'CERRADA', fecha_cierre: new Date().toISOString().slice(0,10) }); setShowForm(false) }} />
