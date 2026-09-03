@@ -21,9 +21,11 @@ const fmtNum = n => n == null ? '—' : n.toLocaleString('es-ES', { minimumFract
 const fmtPct = n => n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
 const mesLabel = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }) : ''
 const mesKey = d => d ? d.slice(0, 7) : ''
+const curSym = d => d === 'HKD' ? 'HK$' : d === 'EUR' ? '€' : d === 'GBP' ? '£' : '$'
 const dias = (a, b) => a && b ? Math.round((new Date(b) - new Date(a)) / 86400000) : null
 
 function calcOp(op) {
+  const divisa = op.divisa || 'USD'
   const exposicion = (op.strike || 0) * (op.multiplicador || 100)
   const obj_precio = op.prima && op.objetivo_pct ? parseFloat((op.prima * op.objetivo_pct / 100).toFixed(2)) : null
   let beneficio = op.beneficio != null ? op.beneficio : null
@@ -35,9 +37,16 @@ function calcOp(op) {
       precio_cierre = parseFloat((op.prima - beneficio).toFixed(2))
   }
   const d = dias(op.fecha_apertura, op.fecha_cierre)
+  // rent_total/rent_anual usan SIEMPRE beneficio y exposición en la MISMA divisa nativa —
+  // el % de rentabilidad no depende de a qué moneda se convierta después.
   const rent_total = beneficio != null && exposicion ? parseFloat((beneficio / exposicion * 100).toFixed(4)) : null
   const rent_anual = rent_total != null && d > 0 ? parseFloat((rent_total * 365 / d).toFixed(2)) : null
-  return { ...op, exposicion, obj_precio, beneficio, precio_cierre, dias: d, rent_total, rent_anual }
+  // beneficio_usd: el beneficio ya convertido a USD, fijado UNA VEZ al momento del cierre
+  // (con el tipo de cambio de entonces). Para operaciones en USD coincide siempre con "beneficio".
+  // Para otras divisas, calcOp NUNCA lo recalcula con el TC actual — solo lo pasa tal cual si ya venía fijado,
+  // para no "revivir" el tipo de cambio cada vez que se recarga la app.
+  const beneficio_usd = divisa === 'USD' ? beneficio : (op.beneficio_usd != null ? op.beneficio_usd : null)
+  return { ...op, divisa, exposicion, obj_precio, beneficio, precio_cierre, dias: d, rent_total, rent_anual, beneficio_usd }
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
@@ -210,7 +219,7 @@ function buildSeed() {
 const EMPTY = {
   cuenta: 'pablo', estado: 'ABIERTA', fecha_apertura: new Date().toISOString().slice(0,10),
   estrategia: 'VPUT', ticker: '', vencimiento: '', strike: '', prima: '', objetivo_pct: 45,
-  contratos: 1, multiplicador: 100, margen: '', comision: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
+  contratos: 1, multiplicador: 100, divisa: 'USD', margen: '', comision: '', fecha_cierre: '', precio_cierre: '', adjudicacion: '', beneficio: '', notas: ''
 }
 
 // ══════════════════════════════════════
@@ -285,15 +294,16 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
         <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
           <Badge text={op.ticker} color={C.acc} />
           {op.contratos > 1 && <span style={{ fontSize: 9, color: C.gold, fontWeight: 700 }}>×{op.contratos}</span>}
+          {op.divisa && op.divisa !== 'USD' && <span style={{ fontSize: 8, background: C.mut, color: '#fff', borderRadius: 3, padding: '1px 4px', fontWeight: 700 }}>{op.divisa}</span>}
           {isNew && <span style={{ fontSize: 8, background: C.grn, color: '#000', borderRadius: 3, padding: '1px 4px', fontWeight: 800 }}>NEW</span>}
         </span>
         <Badge text={op.estrategia} color={estratColor(op.estrategia)} />
         <span style={{ color: C.dim, fontSize: 11 }}>{fmtDate(op.vencimiento)}</span>
         <span style={{ color: C.txt, textAlign: 'right' }}>{op.strike ?? '—'}</span>
-        <span style={{ color: C.gold, textAlign: 'right' }}>{op.prima != null ? fmtNum(op.prima) : '—'}</span>
-        <span style={{ color: C.dim, textAlign: 'right', fontSize: 11 }}>{op.obj_precio != null ? fmtNum(op.obj_precio) : '—'}</span>
+        <span style={{ color: C.gold, textAlign: 'right' }}>{op.prima != null ? `${fmtNum(op.prima)} ${curSym(op.divisa)}` : '—'}</span>
+        <span style={{ color: C.dim, textAlign: 'right', fontSize: 11 }}>{op.obj_precio != null ? `${fmtNum(op.obj_precio)} ${curSym(op.divisa)}` : '—'}</span>
         <span style={{ color: colBenef, textAlign: 'right', fontWeight: op.beneficio != null ? 700 : 400 }}>
-          {op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)}` : '—'}
+          {op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)} ${curSym(op.divisa)}` : '—'}
         </span>
         <span style={{ color: colBenef, textAlign: 'right', fontSize: 11 }}>
           {op.rent_anual != null ? fmtPct(op.rent_anual) : '—'}
@@ -332,21 +342,23 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
               ['Vencimiento', fmtDate(op.vencimiento)],
               ['Fecha cierre', fmtDate(op.fecha_cierre)],
               ['Strike', op.strike ?? '—'],
+              ...(op.divisa && op.divisa !== 'USD' ? [['Divisa', op.divisa]] : []),
               ['Contratos', op.contratos > 1 ? `${op.contratos} contratos` : '1 contrato'],
               ...(op.multiplicador && op.multiplicador !== 100 ? [['Multiplicador', `×${op.multiplicador}`]] : []),
-              ['Comisión apertura', op.comision != null ? `${fmtNum(op.comision)} $` : '—'],
-              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)} $` : '—'],
-              ...(op.contratos > 1 && op.prima != null ? [['Prima / contrato', `${fmtNum(parseFloat((op.prima / op.contratos).toFixed(2)))} $`]] : []),
-              ['Precio cierre', op.precio_cierre != null ? `${fmtNum(op.precio_cierre)} $` : '—'],
-              ['Objetivo cierre', op.obj_precio != null ? `${fmtNum(op.obj_precio)} $` : '—'],
-              ['Margen req.', op.margen != null ? `${fmtNum(op.margen)} $` : '—'],
-              ['Exposición (×100)', op.exposicion != null ? `${fmtNum(op.exposicion)} $` : '—'],
-              ['Beneficio neto', op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)} $` : '—'],
-              ...(op.contratos > 1 && op.beneficio != null ? [['Beneficio / contrato', `${op.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((op.beneficio / op.contratos).toFixed(2)))} $`]] : []),
+              ['Comisión apertura', op.comision != null ? `${fmtNum(op.comision)} ${curSym(op.divisa)}` : '—'],
+              ['Prima cobrada', op.prima != null ? `${fmtNum(op.prima)} ${curSym(op.divisa)}` : '—'],
+              ...(op.contratos > 1 && op.prima != null ? [['Prima / contrato', `${fmtNum(parseFloat((op.prima / op.contratos).toFixed(2)))} ${curSym(op.divisa)}`]] : []),
+              ['Precio cierre', op.precio_cierre != null ? `${fmtNum(op.precio_cierre)} ${curSym(op.divisa)}` : '—'],
+              ['Objetivo cierre', op.obj_precio != null ? `${fmtNum(op.obj_precio)} ${curSym(op.divisa)}` : '—'],
+              ['Margen req.', op.margen != null ? `${fmtNum(op.margen)} ${curSym(op.divisa)}` : '—'],
+              [`Exposición (×${op.multiplicador || 100})`, op.exposicion != null ? `${fmtNum(op.exposicion)} ${curSym(op.divisa)}` : '—'],
+              ['Beneficio neto', op.beneficio != null ? `${op.beneficio >= 0 ? '+' : ''}${fmtNum(op.beneficio)} ${curSym(op.divisa)}` : '—'],
+              ...(op.divisa && op.divisa !== 'USD' && op.beneficio_usd != null ? [['Beneficio (≈USD al cierre)', `${op.beneficio_usd >= 0 ? '+' : ''}${fmtNum(op.beneficio_usd)} $`]] : []),
+              ...(op.contratos > 1 && op.beneficio != null ? [['Beneficio / contrato', `${op.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((op.beneficio / op.contratos).toFixed(2)))} ${curSym(op.divisa)}`]] : []),
               ['Rent. total', op.rent_total != null ? fmtPct(op.rent_total) : '—'],
               ['Rent. anualizada', op.rent_anual != null ? fmtPct(op.rent_anual) : '—'],
               ['Días', op.dias ?? '—'],
-              ['Adjudicación', op.adjudicacion != null ? `${fmtNum(op.adjudicacion)} $` : '—'],
+              ['Adjudicación', op.adjudicacion != null ? `${fmtNum(op.adjudicacion)} ${curSym(op.divisa)}` : '—'],
             ].map(([l, v]) => (
               <div key={l} style={{ background: C.surf2, borderRadius: 6, padding: '6px 10px' }}>
                 <div style={{ fontSize: 9, color: C.dim, textTransform: 'uppercase', marginBottom: 2 }}>{l}</div>
@@ -369,9 +381,10 @@ function OpRow({ op, onEdit, onDelete, onClose, isNew }) {
 }
 
 // Formulario
-function OpForm({ initial, onSave, onCancel, titulo }) {
+function OpForm({ initial, onSave, onCancel, titulo, rates }) {
   const [f, setF] = useState(() => ({ ...EMPTY, ...initial }))
   const upd = k => v => setF(p => ({ ...p, [k]: v }))
+  const sym = curSym(f.divisa)
   const calc = calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null, objetivo_pct: +f.objetivo_pct || 45,
     multiplicador: +f.multiplicador || 100,
     margen: +f.margen || null, precio_cierre: +f.precio_cierre || null,
@@ -392,36 +405,39 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
         <Input label="Fecha apertura" value={f.fecha_apertura} onChange={upd('fecha_apertura')} type="date" />
         <Input label="Vencimiento" value={f.vencimiento} onChange={upd('vencimiento')} type="date" />
         <Input label="Strike" value={f.strike} onChange={upd('strike')} type="number" step="0.5" />
-        <Input label="Prima total contrato ($)" value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
+        <Select label="Divisa" value={f.divisa || 'USD'} onChange={upd('divisa')}
+          options={[{ v: 'USD', l: '🇺🇸 USD' }, { v: 'EUR', l: '🇪🇺 EUR' }, { v: 'GBP', l: '🇬🇧 GBP' }, { v: 'HKD', l: '🇭🇰 HKD' }]} />
+        <Input label={`Prima total contrato (${sym})`} value={f.prima} onChange={upd('prima')} type="number" step="0.01" />
         <Input label="Nº contratos" value={f.contratos ?? 1} onChange={upd('contratos')} type="number" step="1" />
         <Input label="Multiplicador" value={f.multiplicador ?? 100} onChange={upd('multiplicador')} type="number" step="1" placeholder="100 USA/EU · HK varía (calcular: importe÷precio÷contratos)" />
-        <Input label="Comisión apertura ($)" value={f.comision ?? ''} onChange={upd('comision')} type="number" step="0.01" placeholder="ej: 0.65" />
+        <Input label={`Comisión apertura (${sym})`} value={f.comision ?? ''} onChange={upd('comision')} type="number" step="0.01" placeholder="ej: 0.65" />
         <Input label="Objetivo cierre %" value={f.objetivo_pct} onChange={upd('objetivo_pct')} type="number" step="1" />
-        <Input label="Margen requerido ($)" value={f.margen} onChange={upd('margen')} type="number" step="1" />
+        <Input label={`Margen requerido (${sym})`} value={f.margen} onChange={upd('margen')} type="number" step="1" />
       </div>
 
       {/* Preview precio objetivo */}
       {calc.obj_precio != null && (
         <div style={{ background: C.bg, border: `1px solid ${C.gold}40`, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20 }}>
-          <div><div style={{ fontSize: 9, color: C.dim }}>PRECIO OBJETIVO CIERRE</div><div style={{ fontSize: 16, fontWeight: 700, color: C.gold }}>{fmtNum(calc.obj_precio)}</div></div>
-          <div><div style={{ fontSize: 9, color: C.dim }}>EXPOSICIÓN REAL</div><div style={{ fontSize: 16, fontWeight: 700, color: C.dim }}>{fmtNum(calc.exposicion)}</div></div>
+          <div><div style={{ fontSize: 9, color: C.dim }}>PRECIO OBJETIVO CIERRE</div><div style={{ fontSize: 16, fontWeight: 700, color: C.gold }}>{fmtNum(calc.obj_precio)} {sym}</div></div>
+          <div><div style={{ fontSize: 9, color: C.dim }}>EXPOSICIÓN REAL (×{f.multiplicador || 100})</div><div style={{ fontSize: 16, fontWeight: 700, color: C.dim }}>{fmtNum(calc.exposicion)} {sym}</div></div>
         </div>
       )}
 
       {f.estado === 'CERRADA' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
           <Input label="Fecha cierre" value={f.fecha_cierre} onChange={upd('fecha_cierre')} type="date" />
-          <Input label="Precio cierre total ($)" value={f.precio_cierre} onChange={upd('precio_cierre')} type="number" step="0.01" />
-          <Input label="Beneficio neto ($) — opcional" value={f.beneficio} onChange={upd('beneficio')} type="number" step="0.01" />
-          <Input label="Adjudicación ($)" value={f.adjudicacion} onChange={upd('adjudicacion')} type="number" step="0.01" />
+          <Input label={`Precio cierre total (${sym})`} value={f.precio_cierre} onChange={upd('precio_cierre')} type="number" step="0.01" />
+          <Input label={`Beneficio neto (${sym}) — opcional`} value={f.beneficio} onChange={upd('beneficio')} type="number" step="0.01" />
+          <Input label={`Adjudicación (${sym})`} value={f.adjudicacion} onChange={upd('adjudicacion')} type="number" step="0.01" />
         </div>
       )}
 
       {/* Preview resultados */}
       {f.estado === 'CERRADA' && calc.rent_anual != null && (
         <div style={{ background: C.bg, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          {[['Beneficio total', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(calc.beneficio)} $`, calc.beneficio >= 0 ? C.grn : C.red],
-            ...((f.contratos > 1) ? [['Por contrato', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((calc.beneficio / f.contratos).toFixed(2)))} $`, calc.beneficio >= 0 ? C.grn : C.red]] : []),
+          {[['Beneficio total', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(calc.beneficio)} ${sym}`, calc.beneficio >= 0 ? C.grn : C.red],
+            ...((f.divisa && f.divisa !== 'USD' && rates) ? [['≈ USD (al TC actual)', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((calc.beneficio * (rates[f.divisa] || 1)).toFixed(2)))} $`, calc.beneficio >= 0 ? C.grn : C.red]] : []),
+            ...((f.contratos > 1) ? [['Por contrato', `${calc.beneficio >= 0 ? '+' : ''}${fmtNum(parseFloat((calc.beneficio / f.contratos).toFixed(2)))} ${sym}`, calc.beneficio >= 0 ? C.grn : C.red]] : []),
             ['Rent. total', fmtPct(calc.rent_total), calc.rent_total >= 0 ? C.grn : C.red],
             ['Rent. anual', fmtPct(calc.rent_anual), calc.rent_anual >= 0 ? C.grn : C.red],
             ['Días', `${calc.dias}d`, C.dim]].map(([l, v, col]) => (
@@ -433,14 +449,28 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
       <Input label="Notas" value={f.notas} onChange={upd('notas')} placeholder="Roll, adjudicación, comentarios..." />
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        <button onClick={() => onSave(calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null,
-          contratos: +f.contratos || 1,
-          multiplicador: +f.multiplicador || 100,
-          comision: +f.comision || null,
-          objetivo_pct: +f.objetivo_pct || 45, margen: +f.margen || null,
-          precio_cierre: +f.precio_cierre || null,
-          beneficio: f.beneficio !== '' && f.beneficio != null ? +f.beneficio : null,
-          adjudicacion: +f.adjudicacion || null }))}
+        <button onClick={() => {
+          const divisa = f.divisa || 'USD'
+          const beneficioNum = f.beneficio !== '' && f.beneficio != null ? +f.beneficio : null
+          // beneficio_usd se fija AQUÍ, al guardar (= "el momento del cierre"), con el TC vigente ahora.
+          // Si ya venía fijado de antes (ej. estás editando una op ya cerrada) y no cambias el beneficio, se conserva.
+          const beneficioCambiado = initial?.beneficio !== beneficioNum
+          const beneficio_usd = divisa === 'USD'
+            ? beneficioNum
+            : (beneficioCambiado || initial?.beneficio_usd == null)
+              ? (beneficioNum != null && rates ? parseFloat((beneficioNum * (rates[divisa] || 1)).toFixed(2)) : null)
+              : initial.beneficio_usd
+          onSave(calcOp({ ...f, strike: +f.strike || null, prima: +f.prima || null,
+            divisa,
+            contratos: +f.contratos || 1,
+            multiplicador: +f.multiplicador || 100,
+            comision: +f.comision || null,
+            objetivo_pct: +f.objetivo_pct || 45, margen: +f.margen || null,
+            precio_cierre: +f.precio_cierre || null,
+            beneficio: beneficioNum,
+            beneficio_usd,
+            adjudicacion: +f.adjudicacion || null }))
+        }}
           style={{ flex: 1, background: C.acc, color: '#fff', border: 'none', borderRadius: 8, padding: 12, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
           💾 Guardar
         </button>
@@ -454,7 +484,7 @@ function OpForm({ initial, onSave, onCancel, titulo }) {
 
 // Tab resultados por mes
 function ResultsTab({ ops, cuenta }) {
-  const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA' && o.beneficio != null)
+  const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA' && (o.beneficio_usd != null || o.beneficio != null))
   const byMes = {}
   cerradas.forEach(op => {
     // Usar fecha_cierre, y si no existe usar vencimiento como aproximación
@@ -462,7 +492,7 @@ function ResultsTab({ ops, cuenta }) {
     const k = mesKey(fechaRef)
     if (!k) return
     if (!byMes[k]) byMes[k] = { total: 0, count: 0, mes: mesLabel(fechaRef) }
-    byMes[k].total = Math.round((byMes[k].total + op.beneficio) * 100) / 100
+    byMes[k].total = Math.round((byMes[k].total + (op.beneficio_usd ?? op.beneficio ?? 0)) * 100) / 100
     byMes[k].count += 1
   })
   const meses = Object.entries(byMes).sort(([a], [b]) => a.localeCompare(b))
@@ -922,16 +952,14 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
       const extracted = extractJSON(cleaned)
       const resultados = Array.isArray(extracted) ? extracted : [extracted]
 
-      // Conversión de moneda: EUR, GBP y HKD → USD
+      // Tipos de cambio (para convertir SOLO el beneficio de cierres en divisa no-USD, al TC de ese momento).
+      // Strike, prima, precio_cierre, margen, adjudicación y obj_precio se quedan SIEMPRE en su divisa original.
       const rates = { USD: 1, EUR: eurUsd, GBP: gbpUsd, HKD: hkdUsd ? 1 / hkdUsd : 1 }
+      const toUsd = (val, divisa) => val == null ? null : parseFloat((val * (rates[divisa] || 1)).toFixed(2))
       let convertidas = 0
       resultados.forEach(r => {
-        const rate = rates[r.moneda] || 1
-        if (r.moneda && r.moneda !== 'USD' && rate !== 1) {
-          const conv = v => v ? Math.round(v * rate * 100) / 100 : v
-          r.prima = conv(r.prima); r.precio_cierre = conv(r.precio_cierre); r.beneficio = conv(r.beneficio)
-          convertidas++
-        }
+        r.divisa = r.moneda || 'USD'
+        if (r.tipo === 'CIERRE' && r.divisa !== 'USD' && r.beneficio != null) convertidas++
       })
 
       // Procesar cada operación extraída
@@ -947,22 +975,26 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
           const op_abierta = ops.find(o => matchKey(o) && o.estado === 'ABIERTA')
           const op_yacerrada = !op_abierta && ops.find(o => matchKey(o) && o.estado === 'CERRADA')
           if (op_abierta) {
+            const divisaOp = op_abierta.divisa || 'USD'
+            const beneficioAdj = r.assigned && !r.beneficio
+              ? parseFloat(((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2))
+              : r.beneficio
             cierresVinculados.push({
               ...op_abierta,
               fecha_cierre: r.fecha,
               precio_cierre: (r.assigned && !r.beneficio) ? 0 : r.precio_cierre,
-              beneficio: r.assigned && !r.beneficio
-                ? parseFloat(((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2))
-                : r.beneficio,
+              beneficio: beneficioAdj,
+              beneficio_usd: toUsd(beneficioAdj, divisaOp),
               estado: 'CERRADA',
               notas: (r.assigned && !r.beneficio)
-                ? `Adjudicación — prima ${op_abierta.prima}$ - comisión ${op_abierta.comision || 0}$ = ${((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2)}$`
+                ? `Adjudicación — prima ${op_abierta.prima}${curSym(divisaOp)} - comisión ${op_abierta.comision || 0}${curSym(divisaOp)} = ${((op_abierta.prima || 0) - (op_abierta.comision || 0)).toFixed(2)}${curSym(divisaOp)}`
                 : (op_abierta.notas || '')
             })
           } else if (op_yacerrada) {
             // Ya cerrada — distinguir dos casos:
             // A) Misma fecha de cierre + distinto beneficio → corrección de la misma op
             // B) Fecha de cierre diferente → es una operación NUEVA con mismos parámetros (abrió y cerró rápido)
+            const divisaOp = op_yacerrada.divisa || 'USD'
             const beneficioDetectado = (r.assigned && !r.beneficio) ? null : r.beneficio
             const mismaFecha = op_yacerrada.fecha_cierre === r.fecha
             const difiere = beneficioDetectado != null &&
@@ -973,36 +1005,38 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
               actualizaciones.push({
                 ...op_yacerrada,
                 beneficio: beneficioDetectado,
+                beneficio_usd: toUsd(beneficioDetectado, divisaOp),
                 precio_cierre: r.precio_cierre || op_yacerrada.precio_cierre,
-                notas: `Beneficio corregido desde IB: ${beneficioDetectado}$ (antes: ${op_yacerrada.beneficio}$)`
+                notas: `Beneficio corregido desde IB: ${beneficioDetectado}${curSym(divisaOp)} (antes: ${op_yacerrada.beneficio}${curSym(divisaOp)})`
               })
             } else if (!mismaFecha && beneficioDetectado != null) {
               // Caso B: fecha diferente → operación nueva cerrada (abrió y cerró rápido, sin apertura en BD)
               cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA',
                 estrategia: r.estrategia, ticker: r.ticker, fecha_apertura: '',
-                vencimiento: r.vencimiento, strike: r.strike, prima: 0,
+                vencimiento: r.vencimiento, strike: r.strike, prima: 0, divisa: r.divisa,
                 objetivo_pct: 45, contratos: r.contratos || 1, multiplicador: r.multiplicador || 100, fecha_cierre: r.fecha,
-                precio_cierre: r.precio_cierre, beneficio: beneficioDetectado,
+                precio_cierre: r.precio_cierre, beneficio: beneficioDetectado, beneficio_usd: toUsd(beneficioDetectado, r.divisa),
                 notas: `Nueva op (mismos parámetros que op anterior). ${r.notas || ''}`.trim() })
             } else {
               // Misma fecha y mismo beneficio → ya estaba bien, ignorar
               cierresSinVincular.push({ ...op_yacerrada, _yacerrada: true, fecha_cierre: r.fecha, precio_cierre: r.precio_cierre, beneficio: r.beneficio })
             }
           } else {
+            const beneficioNueva = r.assigned ? (r.prima || null) : r.beneficio
             cierresSinVincular.push({ id: uid(), cuenta: cuentaTarget, estado: 'CERRADA', estrategia: r.estrategia, ticker: r.ticker,
-              fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0,
+              fecha_apertura: '', vencimiento: r.vencimiento, strike: r.strike, prima: r.prima || 0, divisa: r.divisa,
               objetivo_pct: 45, contratos: r.contratos || 1, multiplicador: r.multiplicador || 100, fecha_cierre: r.fecha,
               precio_cierre: r.assigned ? 0 : r.precio_cierre,
-              beneficio: r.assigned ? (r.prima || null) : r.beneficio,
+              beneficio: beneficioNueva, beneficio_usd: toUsd(beneficioNueva, r.divisa),
               notas: r.assigned ? 'Adjudicación — introduce la prima original cobrada como beneficio' : (r.notas || '') })
           }
         } else {
           aperturas.push(calcOp({ id: uid(), cuenta: cuentaTarget, estado: 'ABIERTA', estrategia: r.estrategia, ticker: r.ticker,
-            fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima,
+            fecha_apertura: r.fecha, vencimiento: r.vencimiento, strike: r.strike, prima: r.prima, divisa: r.divisa,
             objetivo_pct: 45, contratos: r.contratos || 1, multiplicador: r.multiplicador || 100, margen: null, fecha_cierre: null, precio_cierre: null, beneficio: null, adjudicacion: null, notas: r.notas || '' }))
         }
       })
-      const convMsg = convertidas > 0 ? ` (${convertidas} op${convertidas > 1 ? 's' : ''} convertida${convertidas > 1 ? 's' : ''} de ${resultados.find(r => r.moneda && r.moneda !== 'USD')?.moneda || '?'} a USD)` : ''
+      const convMsg = convertidas > 0 ? ` (${convertidas} beneficio(s) convertido(s) a USD al TC del cierre)` : ''
 
       // ── Detección de duplicados ──────────────────────────────────
       // Fingerprint: misma cuenta+estrategia+ticker+fecha_apertura+vencimiento+strike
@@ -1098,7 +1132,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
   // Stats rápidas
   const abiertas = ops.filter(o => o.cuenta === cuenta && o.estado === 'ABIERTA')
   const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA')
-  const benefTotal = cerradas.reduce((s, o) => s + (o.beneficio || 0), 0)
+  const benefTotal = cerradas.reduce((s, o) => s + (o.beneficio_usd ?? o.beneficio ?? 0), 0)
 
   const NAV = [
     { id: 'pablo', label: '📋 Pablo', group: 'P', color: C.pablo },
@@ -1365,6 +1399,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
                 <OpForm
                   key={editOp?.id || 'new'}
                   initial={editOp || { ...EMPTY, cuenta }}
+                  rates={{ USD: 1, EUR: eurUsd, GBP: gbpUsd, HKD: hkdUsd ? 1 / hkdUsd : 1 }}
                   titulo={pendingCierres.length > 0 && editOp
                     ? `⚠️ Cierre sin vincular${pendingCierres.length > 1 ? ` (${pendingCierres.indexOf(editOp) + 1}/${pendingCierres.length})` : ''}: ${editOp.ticker}`
                     : editOp?.id ? '✏️ Editar operación' : '+ Nueva operación'}
@@ -1400,6 +1435,7 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
                 <OpForm
                   key={closeOp?.id || 'close'}
                   initial={closeOp}
+                  rates={{ USD: 1, EUR: eurUsd, GBP: gbpUsd, HKD: hkdUsd ? 1 / hkdUsd : 1 }}
                   titulo="✅ Cerrar operación"
                   onSave={saveOp}
                   onCancel={() => setCloseOp(null)} />
