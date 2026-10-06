@@ -262,10 +262,30 @@ function Select({ label, value, onChange, options }) {
 }
 
 // Cuenta atrás a vencimiento
-const diasVence = venc => {
+const diasVence = (venc, now = new Date()) => {
   if (!venc) return null
-  return Math.ceil((new Date(venc + 'T23:59:59') - new Date()) / 86400000)
+  return Math.ceil((new Date(venc + 'T23:59:59') - now) / 86400000)
 }
+
+// <cobertura-logic>
+// Para cada ticker de la lista "tengo 100 acciones", mira si hay VCALL ABIERTAS y VIVAS (no vencidas) en la cuenta.
+// Una VCALL con vencimiento ya pasado que sigue ABIERTA en el diario NO cuenta como cobertura: se avisa aparte
+// ("vencida sin cerrar") para que la cierres/adjudiques en el diario.
+function calcCobertura(items, ops, cuenta, norm, now = new Date()) {
+  return (items || []).map(it => {
+    const posibles = Math.max(1, Math.floor((+it.acciones || 100) / 100))
+    const calls = ops.filter(o => o.cuenta === cuenta && o.estado === 'ABIERTA' &&
+      o.estrategia === 'VCALL' && norm(o.ticker) === norm(it.ticker))
+    const conDias = calls.map(o => ({ op: o, dv: diasVence(o.vencimiento, now) }))
+    const vivas = conDias.filter(x => x.dv == null || x.dv > 0).sort((a, b) => (a.dv ?? 9999) - (b.dv ?? 9999))
+    const vencidas = conDias.filter(x => x.dv != null && x.dv <= 0)
+    const cubiertos = vivas.reduce((s, x) => s + (x.op.contratos || 1), 0)
+    const estado = cubiertos >= posibles ? 'CUBIERTA' : cubiertos > 0 ? 'PARCIAL' : 'SIN_COBERTURA'
+    const proxVence = vivas.length ? vivas[0].dv : null
+    return { ...it, posibles, vivas, vencidas, cubiertos, estado, proxVence }
+  })
+}
+// </cobertura-logic>
 const mesCierre = d => d ? new Date(d).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).replace(' ', "'") : null
 
 const GRID = '80px 55px 65px 75px 50px 60px 60px 75px 85px 75px 60px 75px 35px'
@@ -552,6 +572,89 @@ function ResultsTab({ ops, cuenta }) {
   )
 }
 
+// ── Pestaña "Cobertura calls": tickers de los que tengo ≥100 acciones y si tienen VCALL abierta ──
+function CoberturaTab({ ops, items, onChange, norm, cuenta }) {
+  const [tk, setTk] = useState('')
+  const [n, setN] = useState(100)
+  const [msg, setMsg] = useState('')
+  const filas = calcCobertura(items, ops, cuenta, norm)
+  const orden = { SIN_COBERTURA: 0, PARCIAL: 1, CUBIERTA: 2 }
+  const filasOrd = [...filas].sort((a, b) => orden[a.estado] - orden[b.estado] || a.ticker.localeCompare(b.ticker))
+  const sin = filas.filter(f => f.estado !== 'CUBIERTA')
+  const estCol = { CUBIERTA: C.grn, PARCIAL: C.gold, SIN_COBERTURA: C.red }
+
+  const add = () => {
+    const t = tk.toUpperCase().trim()
+    if (!t) return
+    if (items.some(i => norm(i.ticker) === norm(t))) { setMsg(`${t} ya está en la lista`); return }
+    onChange([...items, { ticker: t, acciones: +n || 100 }])
+    setTk(''); setN(100); setMsg('')
+  }
+  const setAcciones = (ticker, v) => onChange(items.map(i => i.ticker === ticker ? { ...i, acciones: +v || 100 } : i))
+  const quitar = ticker => { if (confirm(`¿Quitar ${ticker} de la lista de acciones?\n(No borra ninguna operación del diario.)`)) onChange(items.filter(i => i.ticker !== ticker)) }
+
+  return (
+    <div style={{ maxWidth: 820 }}>
+      <div style={{ fontSize: 12, color: C.dim, marginBottom: 12 }}>
+        Añade los tickers de los que tienes 100 acciones (o más). La app mira tus VCALL <strong>abiertas y no vencidas</strong> en la cuenta de {cuenta === 'pablo' ? 'Pablo' : 'María'}.
+        Esta lista es independiente de las operaciones: quitar un ticker de aquí no borra nada del diario.
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ width: 130 }}><Input label="Ticker" value={tk} onChange={setTk} placeholder="ZTS, PEP..." /></div>
+        <div style={{ width: 110 }}><Input label="Nº acciones" value={n} onChange={setN} type="number" step="100" /></div>
+        <button onClick={add} style={{ padding: '8px 16px', background: C.acc, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700, height: 34 }}>+ Añadir</button>
+        {msg && <span style={{ fontSize: 11, color: C.gold }}>{msg}</span>}
+      </div>
+
+      {filas.length === 0 && (
+        <div style={{ padding: 24, textAlign: 'center', color: C.mut, background: C.surf, borderRadius: 12, border: `1px solid ${C.brd}` }}>
+          Todavía no has añadido ningún ticker.
+        </div>
+      )}
+
+      {filas.length > 0 && (
+        <div style={{ background: sin.length ? C.red + '12' : C.grn + '12', border: `1px solid ${sin.length ? C.red : C.grn}55`, borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: sin.length ? C.red : C.grn, fontWeight: 600 }}>
+          {sin.length === 0
+            ? `✅ Todas tus acciones tienen VCALL abierta (${filas.length}/${filas.length})`
+            : `⚠️ ${filas.length - sin.length} de ${filas.length} cubiertas · Faltan VCALL en: ${sin.map(f => f.ticker).join(', ')}`}
+        </div>
+      )}
+
+      {filasOrd.map(f => (
+        <div key={f.ticker} style={{ background: C.surf, border: `1px solid ${C.brd}`, borderLeft: `3px solid ${estCol[f.estado]}`, borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <Badge text={f.ticker} color={C.acc} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: estCol[f.estado] }}>
+              {f.estado === 'CUBIERTA' ? '✅ Cubierta' : f.estado === 'PARCIAL' ? `◐ Parcial ${f.cubiertos}/${f.posibles}` : '⚠️ Sin VCALL'}
+            </span>
+            {f.estado === 'CUBIERTA' && f.proxVence != null && f.proxVence <= 15 && (
+              <span style={{ fontSize: 11, color: '#f97316', fontWeight: 700 }}>⏳ vence en {f.proxVence}d — prepara la siguiente</span>
+            )}
+            <span style={{ flex: 1 }} />
+            <input type="number" step="100" value={f.acciones} onChange={e => setAcciones(f.ticker, e.target.value)}
+              title="Nº de acciones"
+              style={{ width: 70, background: C.bg, border: `1px solid ${C.brd}`, color: C.dim, borderRadius: 6, padding: '4px 6px', fontSize: 11, outline: 'none' }} />
+            <span style={{ fontSize: 10, color: C.dim }}>acc.</span>
+            <button onClick={() => quitar(f.ticker)} style={{ background: 'none', border: 'none', color: C.red, cursor: 'pointer', fontSize: 13 }} title="Quitar de la lista">🗑</button>
+          </div>
+          {f.vivas.map(x => (
+            <div key={x.op.id} style={{ fontSize: 11, color: C.dim, marginTop: 6 }}>
+              🟢 VCALL strike <strong style={{ color: C.txt }}>{x.op.strike}</strong> · vence {fmtDate(x.op.vencimiento)}{x.dv != null ? ` (${x.dv}d)` : ''}
+              {(x.op.contratos || 1) > 1 ? ` · ×${x.op.contratos}` : ''}
+            </div>
+          ))}
+          {f.vencidas.map(x => (
+            <div key={x.op.id} style={{ fontSize: 11, color: C.gold, marginTop: 6 }}>
+              ⚠️ VCALL strike {x.op.strike} con vencimiento {fmtDate(x.op.vencimiento)} sigue ABIERTA en el diario — ya venció, no cuenta como cobertura. Ciérrala o adjudícala en la pestaña de operaciones.
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ══════════════════════════════════════
 // APP PRINCIPAL
 // ══════════════════════════════════════
@@ -579,6 +682,9 @@ export default function App() {
   const [soloNuevas, setSoloNuevas] = useState(false)   // filtro "ver solo nuevas"
   const [githubToken, setGithubToken] = useState(LS.get('gh-token') || '')
   const [gistId, setGistId] = useState(LS.get('gist-id') || '')
+  // Lista de tickers con 100+ acciones (pestaña Cobertura). Clave propia, independiente de las operaciones.
+  const [acciones100, setAcciones100] = useState(() => { const v = LS.get('acciones-100'); return v && Array.isArray(v.items) ? v : { items: [], ts: 0 } })
+  const accionesTimer = useRef(null)
   const [syncStatus, setSyncStatus] = useState('')
   const [dataTs, setDataTs] = useState(0)
   const syncTimer = useRef(null)
@@ -610,11 +716,44 @@ export default function App() {
     } catch { return null }
   }
 
+  // ── Lista de acciones (Cobertura): adoptar la de la nube si es más reciente que la local ──
+  const adoptAcciones = cloud => {
+    const c = cloud && cloud.acciones100
+    if (!c || !Array.isArray(c.items)) return
+    const l = LS.get('acciones-100')
+    if (!l || (c.ts || 0) > (l.ts || 0)) { LS.set('acciones-100', c); setAcciones100(c) }
+  }
+
+  // Sube SOLO el campo acciones100 al Gist: lee primero lo que hay en la nube y conserva tal cual
+  // ops / ts / deleted, para no pisar operaciones más recientes de otro PC. Si no se puede leer, no escribe nada.
+  const syncAccionesToGist = async data => {
+    const tok = LS.get('gh-token'), id = LS.get('gist-id')
+    if (!tok || !id) return
+    const cloud = await loadFromGist()
+    if (!cloud) return
+    try {
+      const r = await fetch(`https://api.github.com/gists/${id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { 'diario-opciones.json': { content: JSON.stringify({ ...cloud, acciones100: data }) } } })
+      })
+      if (!r.ok) setSyncStatus(`⚠️ La lista de acciones se guardó en este PC pero GitHub no la aceptó (${r.status})`)
+    } catch (e) { setSyncStatus(`⚠️ Lista de acciones guardada solo en este PC: ${e.message}`) }
+  }
+
+  const persistAcciones = items => {
+    const data = { items, ts: Date.now() }
+    setAcciones100(data); LS.set('acciones-100', data)
+    if (accionesTimer.current) clearTimeout(accionesTimer.current)
+    accionesTimer.current = setTimeout(() => syncAccionesToGist(data), 1500)
+  }
+
   const syncToGist = async (arr, ts) => {
     const tok = LS.get('gh-token')
     if (!tok) { setSyncStatus('❌ Falta el token de GitHub'); return }
     const deleted = LS.get('diario-ops-deleted-v1') || []
-    const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now(), deleted })
+    const acciones = LS.get('acciones-100') || undefined   // se conserva el campo extra al subir operaciones
+    const content = JSON.stringify({ ops: arr, ts: ts ?? Date.now(), deleted, acciones100: acciones })
     try {
       let id = LS.get('gist-id')
       if (!id) {
@@ -654,6 +793,7 @@ export default function App() {
       const local = Array.isArray(localRaw) ? { ops: localRaw, ts: 0 } : localRaw
       // Intentar cargar desde Gist (puede tener datos de otro dispositivo)
       const cloud = await loadFromGist()
+      adoptAcciones(cloud)
       // Gana quien tenga el timestamp más reciente, NO quien tenga más operaciones
       let base = local?.ops || null
       let baseTs = local?.ts || 0
@@ -712,6 +852,7 @@ export default function App() {
       if (!silent) setSyncStatus('❌ No se pudo leer el Gist — revisa que el token y el Gist ID sean correctos')
       return
     }
+    adoptAcciones(cloud)
     // Fusionamos también la lista negra de borrados que traiga la nube
     if (cloud.deleted && cloud.deleted.length) {
       const deletedLocal = new Set(LS.get('diario-ops-deleted-v1') || [])
@@ -744,7 +885,7 @@ export default function App() {
     if (syncTimer.current) clearTimeout(syncTimer.current)
     syncTimer.current = setTimeout(() => syncToGist(arr, ts), 3000)
   }
-  const cuenta = tab === 'pablo' || tab === 'res-pablo' ? 'pablo' : 'maria'
+  const cuenta = tab === 'pablo' || tab === 'res-pablo' || tab === 'cobertura' ? 'pablo' : 'maria'
 
   // Filtrar operaciones
   const opsTab = ops.filter(o => {
@@ -1134,11 +1275,15 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
   const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA')
   const benefTotal = cerradas.reduce((s, o) => s + (o.beneficio_usd ?? o.beneficio ?? 0), 0)
 
+  // Nº de tickers de la lista sin VCALL abierta completa (para el aviso en la pestaña)
+  const sinCobertura = calcCobertura(acciones100.items, ops, 'pablo', normTicker).filter(f => f.estado !== 'CUBIERTA').length
+
   const NAV = [
     { id: 'pablo', label: '📋 Pablo', group: 'P', color: C.pablo },
     { id: 'maria', label: '📋 María', group: 'M', color: C.maria },
     { id: 'res-pablo', label: '📊 Resultados Pablo', group: 'P', color: C.pablo },
     { id: 'res-maria', label: '📊 Resultados María', group: 'M', color: C.maria },
+    { id: 'cobertura', label: `🛡️ Cobertura calls${sinCobertura > 0 ? ` (${sinCobertura})` : ''}`, group: 'V', color: sinCobertura > 0 ? C.red : C.grn },
     { id: 'comparador', label: '🧮 Comparador', group: 'C', color: C.gold },
   ]
 
@@ -1313,6 +1458,9 @@ assigned=true ÚNICAMENTE para acción "Assigned". Para "Expired" usa assigned=f
         )}
 
         {/* COMPARADOR */}
+        {tab === 'cobertura' && (
+          <CoberturaTab ops={ops} items={acciones100.items} onChange={persistAcciones} norm={normTicker} cuenta="pablo" />
+        )}
         {tab === 'comparador' && <ComparadorOpciones />}
 
         {/* OPERACIONES */}
