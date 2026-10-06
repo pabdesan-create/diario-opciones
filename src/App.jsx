@@ -282,7 +282,11 @@ function calcCobertura(items, ops, cuenta, norm, now = new Date()) {
     const cubiertos = vivas.reduce((s, x) => s + (x.op.contratos || 1), 0)
     const estado = cubiertos >= posibles ? 'CUBIERTA' : cubiertos > 0 ? 'PARCIAL' : 'SIN_COBERTURA'
     const proxVence = vivas.length ? vivas[0].dv : null
-    return { ...it, posibles, vivas, vencidas, cubiertos, estado, proxVence }
+    // Acumulado ganado con VCALL ya CERRADAS de este ticker (en USD: beneficio_usd fijado al cierre)
+    const cerradas = ops.filter(o => o.cuenta === cuenta && o.estado === 'CERRADA' &&
+      o.estrategia === 'VCALL' && norm(o.ticker) === norm(it.ticker) && (o.beneficio_usd ?? o.beneficio) != null)
+    const ganado = cerradas.reduce((s, o) => s + (o.beneficio_usd ?? o.beneficio), 0)
+    return { ...it, posibles, vivas, vencidas, cubiertos, estado, proxVence, ganado, nCerradas: cerradas.length }
   })
 }
 // </cobertura-logic>
@@ -581,6 +585,7 @@ function CoberturaTab({ ops, items, onChange, norm, cuenta }) {
   const orden = { SIN_COBERTURA: 0, PARCIAL: 1, CUBIERTA: 2 }
   const filasOrd = [...filas].sort((a, b) => orden[a.estado] - orden[b.estado] || a.ticker.localeCompare(b.ticker))
   const sin = filas.filter(f => f.estado !== 'CUBIERTA')
+  const totalGanado = filas.reduce((s, f) => s + f.ganado, 0)
   const estCol = { CUBIERTA: C.grn, PARCIAL: C.gold, SIN_COBERTURA: C.red }
 
   const add = () => {
@@ -618,6 +623,9 @@ function CoberturaTab({ ops, items, onChange, norm, cuenta }) {
           {sin.length === 0
             ? `✅ Todas tus acciones tienen VCALL abierta (${filas.length}/${filas.length})`
             : `⚠️ ${filas.length - sin.length} de ${filas.length} cubiertas · Faltan VCALL en: ${sin.map(f => f.ticker).join(', ')}`}
+          <div style={{ fontSize: 11, fontWeight: 400, color: C.dim, marginTop: 4 }}>
+            💰 Acumulado en VCALL cerradas de estos tickers: <strong style={{ color: totalGanado >= 0 ? C.grn : C.red }}>{totalGanado >= 0 ? '+' : ''}{fmtNum(parseFloat(totalGanado.toFixed(2)))} $</strong>
+          </div>
         </div>
       )}
 
@@ -632,6 +640,9 @@ function CoberturaTab({ ops, items, onChange, norm, cuenta }) {
               <span style={{ fontSize: 11, color: '#f97316', fontWeight: 700 }}>⏳ vence en {f.proxVence}d — prepara la siguiente</span>
             )}
             <span style={{ flex: 1 }} />
+            <span title={`${f.nCerradas} VCALL cerradas de ${f.ticker} (en USD)`} style={{ fontSize: 12, fontWeight: 700, color: f.ganado > 0 ? C.grn : f.ganado < 0 ? C.red : C.mut }}>
+              💰 {f.ganado >= 0 ? '+' : ''}{fmtNum(parseFloat(f.ganado.toFixed(2)))} $ <span style={{ fontSize: 10, fontWeight: 400, color: C.dim }}>({f.nCerradas} VCALL)</span>
+            </span>
             <input type="number" step="100" value={f.acciones} onChange={e => setAcciones(f.ticker, e.target.value)}
               title="Nº de acciones"
               style={{ width: 70, background: C.bg, border: `1px solid ${C.brd}`, color: C.dim, borderRadius: 6, padding: '4px 6px', fontSize: 11, outline: 'none' }} />
